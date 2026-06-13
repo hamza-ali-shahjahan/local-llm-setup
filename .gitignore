@@ -1,0 +1,21 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon?
+
+# Editors
+.vscode/
+.idea/
+*.swp
+*~
+
+# Logs / scratch produced by the script
+*.log
+/tmp/ollama-setup.log
+
+# Local env / secrets — never commit these
+.env
+.env.*
+*.pem
+*.key
