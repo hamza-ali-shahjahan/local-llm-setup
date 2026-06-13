@@ -1,19 +1,20 @@
 #!/usr/bin/env bash
 #
-# local-llm-setup.sh — Zero-to-running local LLM on a Mac, in one command.
+# local-llm-setup.sh — Zero-to-running local LLM in one command (macOS + Linux).
 #
-# Detects your hardware, picks models that actually fit your RAM, installs the
-# Ollama runtime, downloads the right models, sets a sane context window, and
-# runs a smoke test so you KNOW it works.
+# Auto-detects your OS and hardware, picks models that actually fit your RAM,
+# installs the Ollama runtime, downloads the right models, sets a sane context
+# window, and runs a smoke test so you KNOW it works.
 #
 # Designed for someone doing this for the very first time. No prior knowledge
 # assumed. Nothing destructive — it only installs Ollama + the models you OK.
 #
 # Usage:
-#   ./local-llm-setup.sh            # interactive, recommended
-#   ./local-llm-setup.sh --yes      # accept all defaults, no prompts
-#   ./local-llm-setup.sh --dry-run  # show what it WOULD do, change nothing
-#   ./local-llm-setup.sh --tier 14b # force a model tier (7b|14b|32b|70b)
+#   ./local-llm-setup.sh                  # interactive, recommended
+#   ./local-llm-setup.sh --yes            # accept all defaults, no prompts
+#   ./local-llm-setup.sh --dry-run        # show what it WOULD do, change nothing
+#   ./local-llm-setup.sh --tier 14b       # force a model tier (7b|14b|32b|70b)
+#   ./local-llm-setup.sh --platform linux # override OS auto-detect (mac|linux)
 #   ./local-llm-setup.sh --help
 #
 set -euo pipefail
@@ -50,11 +51,13 @@ run() { # run a command, honoring --dry-run
 ASSUME_YES=false
 DRY_RUN=false
 FORCE_TIER=""
+FORCE_OS=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --yes|-y)   ASSUME_YES=true ;;
-    --dry-run)  DRY_RUN=true ;;
-    --tier)     FORCE_TIER="${2:-}"; shift ;;
+    --yes|-y)    ASSUME_YES=true ;;
+    --dry-run)   DRY_RUN=true ;;
+    --tier)      FORCE_TIER="${2:-}"; shift ;;
+    --platform)  FORCE_OS="${2:-}"; shift ;;
     --help|-h)
       grep '^#' "$0" | sed 's/^# \{0,1\}//' | sed '/^!/d'
       exit 0 ;;
@@ -79,26 +82,56 @@ tier_models() {
 CTX=8192   # default context window — big enough for real work, light on RAM
 
 # ----------------------------------------------------------------------------
-# 1. Detect hardware
+# 1. Detect the OS (auto, unless --platform forces it), then the hardware
 # ----------------------------------------------------------------------------
-step "Checking your Mac"
-
-if [[ "$(uname -s)" != "Darwin" ]]; then
-  err "This script is for macOS. Detected: $(uname -s)"; exit 1
+OS="${FORCE_OS:-}"
+if [[ -z "$OS" ]]; then
+  case "$(uname -s)" in
+    Darwin) OS="mac" ;;
+    Linux)  OS="linux" ;;
+    *)      OS="$(uname -s)" ;;
+  esac
+fi
+if [[ "$OS" != "mac" && "$OS" != "linux" ]]; then
+  err "Unsupported platform: ${OS}"
+  say "  Supported: macOS (mac) and Linux (linux)."
+  say "  On Windows, run this inside WSL2, then pass: --platform linux"
+  exit 1
 fi
 
-CHIP="$(sysctl -n machdep.cpu.brand_string 2>/dev/null || true)"
-[[ -z "$CHIP" ]] && CHIP="$(system_profiler SPHardwareDataType 2>/dev/null | awk -F': ' '/Chip/{print $2; exit}')"
-[[ -z "$CHIP" ]] && CHIP="Unknown CPU"
+# OS-specific bits, isolated to two functions. Everything below them is shared.
+detect_chip() {
+  if [[ "$OS" == "mac" ]]; then
+    local c; c="$(sysctl -n machdep.cpu.brand_string 2>/dev/null || true)"
+    [[ -z "$c" ]] && c="$(system_profiler SPHardwareDataType 2>/dev/null | awk -F': ' '/Chip/{print $2; exit}')"
+    [[ -z "$c" ]] && c="Unknown CPU"
+    echo "$c"
+  else
+    local c; c="$(lscpu 2>/dev/null | awk -F': +' '/Model name/{print $2; exit}')"
+    [[ -z "$c" ]] && c="$(awk -F': ' '/model name/{print $2; exit}' /proc/cpuinfo 2>/dev/null)"
+    [[ -z "$c" ]] && c="$(uname -m) CPU"
+    echo "$c"
+  fi
+}
+detect_ram_gb() {
+  if [[ "$OS" == "mac" ]]; then
+    local b; b="$(sysctl -n hw.memsize 2>/dev/null || echo 0)"
+    echo $(( b / 1024 / 1024 / 1024 ))
+  else
+    local kb; kb="$(awk '/MemTotal/{print $2; exit}' /proc/meminfo 2>/dev/null || echo 0)"
+    echo $(( kb / 1024 / 1024 ))
+  fi
+}
 
-MEM_BYTES="$(sysctl -n hw.memsize 2>/dev/null || echo 0)"
-RAM_GB=$(( MEM_BYTES / 1024 / 1024 / 1024 ))
-
+step "Checking your machine"
+CHIP="$(detect_chip)"
+RAM_GB="$(detect_ram_gb)"
+ok "Platform: ${BOLD}${OS}${RESET}"
 ok "Chip: ${BOLD}${CHIP}${RESET}"
-ok "Memory: ${BOLD}${RAM_GB} GB${RESET} unified"
+ok "Memory: ${BOLD}${RAM_GB} GB${RESET}"
 
 # ----------------------------------------------------------------------------
-# 2. Recommend a tier from RAM (macOS itself needs ~6-8 GB headroom)
+# 2. Recommend a tier from RAM (the OS itself needs ~4-8 GB headroom)
 # ----------------------------------------------------------------------------
 if [[ -n "$FORCE_TIER" ]]; then
   TIER="$FORCE_TIER"
@@ -122,21 +155,23 @@ say "  defaults are tuned to run smoothly, not to max out your machine.${RESET}"
 ask "Proceed with this setup?" y || { warn "Stopped. Re-run with --tier to override."; exit 0; }
 
 # ----------------------------------------------------------------------------
-# 3. Ensure Homebrew (the Mac package installer)
+# 3. Ensure the package manager (macOS only — Linux installs Ollama directly)
 # ----------------------------------------------------------------------------
-step "Checking for Homebrew (package manager)"
-if command -v brew >/dev/null 2>&1; then
-  ok "Homebrew already installed"
-else
-  warn "Homebrew not found. It's the standard tool for installing Mac software."
-  if ask "Install Homebrew now? (will ask for your Mac password)" y; then
-    run '/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"'
-    # Make brew available on Apple Silicon in this session
-    [[ -x /opt/homebrew/bin/brew ]] && eval "$(/opt/homebrew/bin/brew shellenv)"
-    ok "Homebrew installed"
+if [[ "$OS" == "mac" ]]; then
+  step "Checking for Homebrew (package manager)"
+  if command -v brew >/dev/null 2>&1; then
+    ok "Homebrew already installed"
   else
-    err "Homebrew is required to install Ollama automatically. Aborting."
-    exit 1
+    warn "Homebrew not found. It's the standard tool for installing Mac software."
+    if ask "Install Homebrew now? (will ask for your Mac password)" y; then
+      run '/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"'
+      # Make brew available on Apple Silicon in this session
+      [[ -x /opt/homebrew/bin/brew ]] && eval "$(/opt/homebrew/bin/brew shellenv)"
+      ok "Homebrew installed"
+    else
+      err "Homebrew is required to install Ollama automatically. Aborting."
+      exit 1
+    fi
   fi
 fi
 
@@ -147,7 +182,11 @@ step "Installing the runtime (Ollama)"
 if command -v ollama >/dev/null 2>&1; then
   ok "Ollama already installed ($(ollama --version 2>/dev/null | head -1))"
 else
-  run "brew install ollama"
+  if [[ "$OS" == "mac" ]]; then
+    run "brew install ollama"
+  else
+    run "curl -fsSL https://ollama.com/install.sh | sh"
+  fi
   ok "Ollama installed"
 fi
 
