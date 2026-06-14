@@ -25,7 +25,7 @@
 #   ./local-llm-setup.sh --help
 #
 set -euo pipefail
-VERSION="1.1.0"
+VERSION="1.1.1"
 
 # ----------------------------------------------------------------------------
 # Pretty output (degrades gracefully if the terminal has no color)
@@ -123,6 +123,18 @@ tier_disk_gb() {
 }
 CTX=8192   # default context window — big enough for real work, light on RAM
 
+# Name of the context-tuned variant for a model tag, e.g.
+#   qwen2.5-coder:14b  ->  qwen2.5-coder-14b-8k
+# The size is kept in the name on purpose: running the script at a different
+# tier later (say 7b) then won't silently overwrite an earlier tier's variant.
+ctx_alias() { echo "${1/:/-}-$((CTX/1024))k"; }
+
+# Installed model names, with the implicit ":latest" tag stripped. `ollama
+# create` tags a variant ":latest", so `ollama list` prints e.g.
+# "qwen2.5-coder-14b-8k:latest" — stripping it lets our bare names match
+# (and `ollama rm <bare>` still removes the ":latest" copy).
+installed_models() { ollama list 2>/dev/null | awk 'NR>1{print $1}' | sed 's/:latest$//'; }
+
 # ----------------------------------------------------------------------------
 # 1. Detect the OS (auto, unless --platform forces it), then the hardware
 # ----------------------------------------------------------------------------
@@ -207,7 +219,8 @@ all_managed_models() {
   for t in 7b 14b 32b 70b; do
     for m in $(tier_models "$t"); do
       echo "$m"
-      echo "${m%%:*}-$((CTX/1024))k"
+      echo "$(ctx_alias "$m")"            # current naming, e.g. qwen2.5-coder-14b-8k
+      echo "${m%%:*}-$((CTX/1024))k"      # legacy pre-1.1.1 naming, e.g. qwen2.5-coder-8k
     done
   done | sort -u
 }
@@ -235,7 +248,7 @@ do_uninstall() {
   command -v ollama >/dev/null 2>&1 || { ok "Ollama isn't installed — nothing to do."; exit 0; }
   local installed=() m
   while IFS= read -r m; do
-    ollama list 2>/dev/null | awk '{print $1}' | grep -qx "$m" && installed+=("$m")
+    installed_models | grep -qx "$m" && installed+=("$m")
   done < <(all_managed_models)
   if (( ${#installed[@]} == 0 )); then
     ok "None of this tool's models are installed — nothing to remove."
@@ -406,7 +419,7 @@ step "Downloading models  ${DIM}(several GB each — this can take a while)${RES
 say "  ${DIM}Big models over a home connection can take 30+ min and may hit"
 say "  transient network drops — this resumes automatically, and is safe to re-run.${RESET}"
 for m in $MODELS; do
-  if ollama list 2>/dev/null | awk '{print $1}' | grep -qx "$m"; then
+  if installed_models | grep -qx "$m"; then
     ok "$m already downloaded"
   elif $DRY_RUN; then
     say "${DIM}[dry-run] ollama pull $m  (with resume-retry)${RESET}"
@@ -430,7 +443,7 @@ done
 # ----------------------------------------------------------------------------
 step "Setting context window to ${CTX} tokens"
 for m in $MODELS; do
-  alias_name="${m%%:*}-$((CTX/1024))k"       # e.g. qwen2.5-coder-8k
+  alias_name="$(ctx_alias "$m")"             # e.g. qwen2.5-coder-14b-8k
   if $DRY_RUN; then
     say "${DIM}[dry-run] create $alias_name from $m with num_ctx=$CTX${RESET}"; continue
   fi
@@ -468,8 +481,8 @@ fi
 # ----------------------------------------------------------------------------
 # Prefer the context-tuned variant for daily use, if it got created.
 CHAT_MODEL="$TEST_MODEL"
-CHAT_ALIAS="${TEST_MODEL%%:*}-$((CTX/1024))k"
-if ! $DRY_RUN && ollama list 2>/dev/null | awk '{print $1}' | grep -qx "$CHAT_ALIAS"; then
+CHAT_ALIAS="$(ctx_alias "$TEST_MODEL")"
+if ! $DRY_RUN && installed_models | grep -qx "$CHAT_ALIAS"; then
   CHAT_MODEL="$CHAT_ALIAS"
 fi
 
@@ -480,7 +493,7 @@ cat <<EOF
     ollama run ${CHAT_MODEL}
 
   ${BOLD}Your context-tuned models${RESET} (use these in daily work):
-$(for m in $MODELS; do echo "    ${m%%:*}-$((CTX/1024))k"; done)
+$(for m in $MODELS; do echo "    $(ctx_alias "$m")"; done)
 
   ${BOLD}Point an app or agent at it${RESET} (OpenAI-compatible API):
     Base URL:  http://localhost:11434/v1

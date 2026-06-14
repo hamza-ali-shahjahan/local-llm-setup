@@ -4,6 +4,23 @@ All notable changes to this project are documented here. Format based on
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/); this project aims to
 follow [Semantic Versioning](https://semver.org/).
 
+## [1.1.1] — 2026-06-14
+
+### Fixed
+- **Context-variant names now keep the model size, so they can't collide.** The
+  baked variant was named `qwen2.5-coder-8k` (the `:14b` was stripped), so running
+  the script at a different tier later would silently overwrite the earlier tier's
+  variant — and it disagreed with the README, which already documented
+  `qwen2.5-coder-14b-8k`. Both scripts now produce `qwen2.5-coder-14b-8k`, and a
+  single helper (`ctx_alias` / `Get-CtxAlias`) is the one source of the name so it
+  can't drift again. `--uninstall` removes both the new and the legacy names.
+- **`--uninstall` now actually matches the context variants.** `ollama create`
+  tags a variant `:latest`, so `ollama list` prints `…-8k:latest` while the tool
+  compared against the bare `…-8k` — meaning the baked variants were never
+  matched (or removed) before. Both scripts now strip the implicit `:latest`
+  when matching, so uninstall (and the "prefer the tuned variant for chat" step)
+  see them.
+
 ## [1.1.0] — 2026-06-14
 
 Makes this the "one command for anyone, anywhere" tool: native Windows support,
@@ -88,6 +105,7 @@ First public release.
 - Full community profile: README, MIT license, CONTRIBUTING, CODE_OF_CONDUCT,
   SECURITY, issue + PR templates.
 
+[1.1.1]: https://github.com/hamza-ali-shahjahan/local-llm-setup/releases/tag/v1.1.1
 [1.1.0]: https://github.com/hamza-ali-shahjahan/local-llm-setup/releases/tag/v1.1.0
 [1.0.1]: https://github.com/hamza-ali-shahjahan/local-llm-setup/releases/tag/v1.0.1
 [1.0.0]: https://github.com/hamza-ali-shahjahan/local-llm-setup/releases/tag/v1.0.0

@@ -37,8 +37,16 @@ param(
   [switch]$Help
 )
 
-$AppVersion = '1.1.0'   # NB: not $Version — that name is the -Version switch param
+$AppVersion = '1.1.1'   # NB: not $Version — that name is the -Version switch param
 $Ctx = 8192             # default context window — big enough for real work, light on RAM
+
+# Name of the context-tuned variant for a model tag (the size is kept in the
+# name so a later run at a different tier won't overwrite an earlier one):
+#   qwen2.5-coder:14b  ->  qwen2.5-coder-14b-8k
+function Get-CtxAlias {
+  param([string]$m)
+  "$($m -replace ':','-')-$([int]($Ctx/1024))k"
+}
 
 # ----------------------------------------------------------------------------
 # Pretty output
@@ -150,7 +158,9 @@ function Test-OllamaUp {
   catch { $false }
 }
 function Get-InstalledModels {
-  try { & ollama list 2>$null | Select-Object -Skip 1 | ForEach-Object { ($_ -split '\s+')[0] } | Where-Object { $_ } }
+  # `ollama create` tags variants ":latest"; strip it so our bare names match
+  # (ollama rm/run with the bare name still target the ":latest" copy).
+  try { & ollama list 2>$null | Select-Object -Skip 1 | ForEach-Object { (($_ -split '\s+')[0]) -replace ':latest$','' } | Where-Object { $_ } }
   catch { @() }
 }
 function Test-ModelInstalled {
@@ -176,7 +186,8 @@ function Get-ManagedModels {
   foreach ($t in @('7b','14b','32b','70b')) {
     foreach ($m in (Get-TierModels $t)) {
       $out.Add($m)
-      $out.Add("$($m.Split(':')[0])-$([int]($Ctx/1024))k")
+      $out.Add((Get-CtxAlias $m))                              # current naming
+      $out.Add("$($m.Split(':')[0])-$([int]($Ctx/1024))k")     # legacy pre-1.1.1 naming
     }
   }
   $out | Sort-Object -Unique
@@ -383,7 +394,7 @@ foreach ($m in $Models) {
 # ----------------------------------------------------------------------------
 Step "Setting context window to $Ctx tokens"
 foreach ($m in $Models) {
-  $alias = "$($m.Split(':')[0])-$([int]($Ctx/1024))k"
+  $alias = Get-CtxAlias $m
   if ($DryRun) { Say "[dry-run] create $alias from $m with num_ctx=$Ctx"; continue }
   $mf = New-TemporaryFile
   "FROM $m`nPARAMETER num_ctx $Ctx" | Set-Content -LiteralPath $mf.FullName -Encoding ascii
@@ -412,7 +423,7 @@ if ($DryRun) {
 # What to do next
 # ----------------------------------------------------------------------------
 $ChatModel = $TestModel
-$ChatAlias = "$($TestModel.Split(':')[0])-$([int]($Ctx/1024))k"
+$ChatAlias = Get-CtxAlias $TestModel
 if (-not $DryRun -and (Test-ModelInstalled $ChatAlias)) { $ChatModel = $ChatAlias }
 
 Step "You're set up. Here's how to use it:"
@@ -421,7 +432,7 @@ Say "  Chat in the terminal:"
 Say "    ollama run $ChatModel"
 Say ''
 Say "  Your context-tuned models (use these in daily work):"
-foreach ($m in $Models) { Say "    $($m.Split(':')[0])-$([int]($Ctx/1024))k" }
+foreach ($m in $Models) { Say "    $(Get-CtxAlias $m)" }
 Say ''
 Say "  Point an app or agent at it (OpenAI-compatible API):"
 Say "    Base URL:  http://localhost:11434/v1"
