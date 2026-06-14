@@ -1,0 +1,36 @@
+name: Linux smoke test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  dry-run:
+    name: Dry-run on real Linux
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Syntax check
+        run: bash -n local-llm-setup.sh
+
+      - name: Run --dry-run on Linux (auto-detect, no install/download)
+        run: |
+          chmod +x local-llm-setup.sh
+          out="$(./local-llm-setup.sh --yes --dry-run 2>&1)"
+          echo "$out"
+          echo "$out" | grep -q "Platform: linux" || { echo "::error::did not detect Linux"; exit 1; }
+          echo "$out" | grep -q "ollama.com/install.sh" || { echo "::error::did not choose the Linux installer"; exit 1; }
+          if echo "$out" | grep -q "Homebrew"; then echo "::error::Homebrew step leaked into the Linux path"; exit 1; fi
+          echo "✓ Linux path detected correctly, picked the right installer, skipped Homebrew"
+
+      - name: Verify RAM + tier are read from /proc/meminfo
+        run: |
+          out="$(./local-llm-setup.sh --yes --dry-run 2>&1)"
+          # A real GitHub runner has multiple GB, so RAM must be > 0 and a tier must be chosen.
+          echo "$out" | grep -qE "Memory: [1-9][0-9]* GB" || { echo "::error::RAM not read from /proc/meminfo"; exit 1; }
+          echo "$out" | grep -qE "Tier:    (7b|14b|32b|70b)" || { echo "::error::no tier selected"; exit 1; }
+          echo "✓ Memory and tier resolved from real Linux hardware"
