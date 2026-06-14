@@ -27,7 +27,9 @@ jobs:
         shell: pwsh
         run: |
           Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
-          $out = (& ./local-llm-setup.ps1 -Yes -DryRun 2>&1 | Out-String)
+          # *>&1 merges ALL streams (incl. Write-Host's Information stream) so the
+          # script's on-screen output is actually captured for these assertions.
+          $out = (& ./local-llm-setup.ps1 -Yes -DryRun *>&1 | Out-String)
           Write-Host $out
           if ($out -notmatch 'Platform: windows')   { Write-Host '::error::did not detect Windows'; exit 1 }
           if ($out -notmatch 'winget install Ollama') { Write-Host '::error::did not choose the Windows installer'; exit 1 }
@@ -39,8 +41,8 @@ jobs:
         shell: pwsh
         run: |
           Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
-          $v = (& ./local-llm-setup.ps1 -Version | Out-String)
+          $v = (& ./local-llm-setup.ps1 -Version *>&1 | Out-String)
           if ($v -notmatch 'local-llm-setup \d+\.\d+\.\d+') { Write-Host '::error::-Version output unexpected'; exit 1 }
-          $h = (& ./local-llm-setup.ps1 -Help | Out-String)
+          $h = (& ./local-llm-setup.ps1 -Help *>&1 | Out-String)
           if ($h -notmatch 'Usage \(PowerShell\)') { Write-Host '::error::-Help did not print usage'; exit 1 }
           Write-Host 'OK: -Version and -Help behave'
