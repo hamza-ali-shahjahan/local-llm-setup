@@ -4,6 +4,34 @@ All notable changes to this project are documented here. Format based on
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/); this project aims to
 follow [Semantic Versioning](https://semver.org/).
 
+## [1.0.1] — 2026-06-14
+
+Hardening from the first real end-to-end run on an M5 Pro (24 GB). The happy
+path worked, but a live install surfaced one real bug and a cluster of
+real-world download issues the dry-run could never catch.
+
+### Fixed
+- **Context-window variants are now actually created.** `ollama create` was
+  called with `-f -` (Modelfile via stdin), which current Ollama (0.30.x)
+  rejects with `no Modelfile or safetensors files found` — so the promised
+  `*-8k` models were silently never built. Now writes a temp Modelfile and
+  passes its path.
+- `ollama --version` no longer leaks a "could not connect" warning into the
+  "already installed" line when the server is down.
+
+### Changed
+- **Resilient downloads.** `ollama pull` now runs through a resume-retry loop
+  (Ollama keeps the partial data, so retries continue) — a transient `EOF` no
+  longer strands the run. After repeated failures it prints a clear remedy:
+  re-run to resume, or clear the partial blob and start that model fresh.
+- **Persistent server on macOS.** Starts Ollama via `brew services` so it
+  survives the script exiting, instead of an in-script `ollama serve &` that
+  died with the process.
+- **Faster, quieter install** via `HOMEBREW_NO_AUTO_UPDATE=1`.
+- Pull progress is suppressed on non-TTY runs (unattended/CI) so the progress
+  bar no longer floods logs with ANSI redraws.
+- Sets expectations up front that large pulls can take 30+ min and are safe to re-run.
+
 ## [1.0.0] — 2026-06-14
 
 First public release.
@@ -22,4 +50,5 @@ First public release.
 - Full community profile: README, MIT license, CONTRIBUTING, CODE_OF_CONDUCT,
   SECURITY, issue + PR templates.
 
+[1.0.1]: https://github.com/hamza-ali-shahjahan/local-llm-setup/releases/tag/v1.0.1
 [1.0.0]: https://github.com/hamza-ali-shahjahan/local-llm-setup/releases/tag/v1.0.0

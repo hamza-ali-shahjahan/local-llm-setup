@@ -44,6 +44,22 @@ ask()   { # ask "Question?" default(y/n) -> returns 0 for yes
 run() { # run a command, honoring --dry-run
   if $DRY_RUN; then printf "${DIM}[dry-run] %s${RESET}\n" "$*"; else eval "$@"; fi
 }
+# Pull a model, resuming through transient network drops (Ollama keeps the
+# partial data, so retrying continues where it left off). Quiet on non-TTY
+# (unattended/CI) so the progress bar doesn't flood logs with ANSI redraws.
+pull_with_retry() {
+  local model="$1" max="${2:-8}" i
+  for (( i=1; i<=max; i++ )); do
+    if [[ -t 1 ]]; then
+      ollama pull "$model" && return 0
+    else
+      ollama pull "$model" >/dev/null 2>&1 && return 0
+    fi
+    warn "Download of $model interrupted (attempt $i/$max) — resuming in ${i}s..."
+    sleep "$i"
+  done
+  return 1
+}
 
 # ----------------------------------------------------------------------------
 # Args
@@ -180,10 +196,15 @@ fi
 # ----------------------------------------------------------------------------
 step "Installing the runtime (Ollama)"
 if command -v ollama >/dev/null 2>&1; then
-  ok "Ollama already installed ($(ollama --version 2>/dev/null | head -1))"
+  # Grab just the version line — when the server is down, `ollama --version`
+  # also prints a "could not connect" warning we don't want to surface.
+  ver="$(ollama --version 2>/dev/null | grep -ai 'version' | head -1)"
+  ok "Ollama already installed${ver:+ ($ver)}"
 else
   if [[ "$OS" == "mac" ]]; then
-    run "brew install ollama"
+    # HOMEBREW_NO_AUTO_UPDATE keeps the install fast, quiet, and deterministic
+    # (a cold `brew install` otherwise auto-updates and dumps a wall of output).
+    run "HOMEBREW_NO_AUTO_UPDATE=1 brew install ollama"
   else
     run "curl -fsSL https://ollama.com/install.sh | sh"
   fi
@@ -197,11 +218,18 @@ step "Starting the Ollama service"
 if curl -fsS http://localhost:11434/api/tags >/dev/null 2>&1; then
   ok "Ollama is already serving on localhost:11434"
 else
-  warn "Service not up — starting it in the background"
   if $DRY_RUN; then
-    say "${DIM}[dry-run] ollama serve &${RESET}"
+    if [[ "$OS" == "mac" ]]; then say "${DIM}[dry-run] brew services start ollama${RESET}"
+    else say "${DIM}[dry-run] ollama serve &${RESET}"; fi
   else
-    (ollama serve >/tmp/ollama-setup.log 2>&1 &) || true
+    # Prefer a managed service that SURVIVES this script exiting. An in-script
+    # `ollama serve &` dies with the script, leaving a later `ollama run` with
+    # no server to talk to.
+    if [[ "$OS" == "mac" ]] && command -v brew >/dev/null 2>&1; then
+      brew services start ollama >/dev/null 2>&1 || (ollama serve >/tmp/ollama-setup.log 2>&1 &)
+    else
+      (ollama serve >/tmp/ollama-setup.log 2>&1 &) || true
+    fi
     # wait up to ~15s for it to come alive
     for _ in $(seq 1 30); do
       curl -fsS http://localhost:11434/api/tags >/dev/null 2>&1 && break
@@ -218,14 +246,26 @@ fi
 # ----------------------------------------------------------------------------
 # 6. Pull the models (this is the big download — multiple GB each)
 # ----------------------------------------------------------------------------
-step "Downloading models  ${DIM}(several GB each — grab a coffee)${RESET}"
+step "Downloading models  ${DIM}(several GB each — this can take a while)${RESET}"
+say "  ${DIM}Big models over a home connection can take 30+ min and may hit"
+say "  transient network drops — this resumes automatically, and is safe to re-run.${RESET}"
 for m in $MODELS; do
   if ollama list 2>/dev/null | awk '{print $1}' | grep -qx "$m"; then
     ok "$m already downloaded"
+  elif $DRY_RUN; then
+    say "${DIM}[dry-run] ollama pull $m  (with resume-retry)${RESET}"
   else
     say "  Pulling ${BOLD}$m${RESET} ..."
-    run "ollama pull $m"
-    ok "$m ready"
+    if pull_with_retry "$m"; then
+      ok "$m ready"
+    else
+      err "Couldn't finish downloading $m after several retries."
+      say "  This is almost always a flaky or rate-limited connection, not a bug."
+      say "  Your partial download is saved — just re-run this script to resume."
+      say "  If a resume stays stuck, clear the partial and start that model fresh:"
+      say "    ${DIM}rm -f ~/.ollama/models/blobs/*-partial* && ./local-llm-setup.sh${RESET}"
+      exit 1
+    fi
   fi
 done
 
@@ -238,10 +278,16 @@ for m in $MODELS; do
   if $DRY_RUN; then
     say "${DIM}[dry-run] create $alias_name from $m with num_ctx=$CTX${RESET}"; continue
   fi
-  printf 'FROM %s\nPARAMETER num_ctx %s\n' "$m" "$CTX" \
-    | ollama create "$alias_name" -f - >/dev/null 2>&1 \
-    && ok "Created ${BOLD}$alias_name${RESET} (ready to use, context pre-set)" \
-    || warn "Could not create $alias_name (you can still use $m directly)"
+  # Ollama needs a real Modelfile PATH — `-f -` (stdin) is rejected with
+  # "no Modelfile or safetensors files found". Write a temp file and pass it.
+  mf="$(mktemp -t modelfile.XXXXXX)"
+  printf 'FROM %s\nPARAMETER num_ctx %s\n' "$m" "$CTX" > "$mf"
+  if ollama create "$alias_name" -f "$mf" >/dev/null 2>&1; then
+    ok "Created ${BOLD}$alias_name${RESET} (ready to use, context pre-set)"
+  else
+    warn "Could not create $alias_name (you can still use $m directly)"
+  fi
+  rm -f "$mf"
 done
 
 # ----------------------------------------------------------------------------
