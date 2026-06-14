@@ -1,0 +1,46 @@
+name: Windows smoke test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  dry-run:
+    name: Dry-run on real Windows
+    runs-on: windows-latest
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Parse check (no execution)
+        shell: pwsh
+        run: |
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            "$PWD/local-llm-setup.ps1", [ref]$null, [ref]$errors) | Out-Null
+          if ($errors) { $errors | ForEach-Object { Write-Host "::error::$($_.Message)" }; exit 1 }
+          Write-Host "OK: local-llm-setup.ps1 parses cleanly"
+
+      - name: Run -DryRun on Windows (auto-detect, no install/download)
+        shell: pwsh
+        run: |
+          Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
+          $out = (& ./local-llm-setup.ps1 -Yes -DryRun 2>&1 | Out-String)
+          Write-Host $out
+          if ($out -notmatch 'Platform: windows')   { Write-Host '::error::did not detect Windows'; exit 1 }
+          if ($out -notmatch 'winget install Ollama') { Write-Host '::error::did not choose the Windows installer'; exit 1 }
+          if ($out -notmatch 'Memory: \d+ GB')       { Write-Host '::error::RAM not read from Win32_ComputerSystem'; exit 1 }
+          if ($out -notmatch 'Tier:\s+(7b|14b|32b|70b)') { Write-Host '::error::no tier selected'; exit 1 }
+          Write-Host 'OK: Windows path detected, picked the native installer, resolved RAM + tier'
+
+      - name: -Version and -Help work
+        shell: pwsh
+        run: |
+          Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
+          $v = (& ./local-llm-setup.ps1 -Version | Out-String)
+          if ($v -notmatch 'local-llm-setup \d+\.\d+\.\d+') { Write-Host '::error::-Version output unexpected'; exit 1 }
+          $h = (& ./local-llm-setup.ps1 -Help | Out-String)
+          if ($h -notmatch 'Usage \(PowerShell\)') { Write-Host '::error::-Help did not print usage'; exit 1 }
+          Write-Host 'OK: -Version and -Help behave'

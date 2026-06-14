@@ -32,5 +32,5 @@ jobs:
           out="$(./local-llm-setup.sh --yes --dry-run 2>&1)"
           # A real GitHub runner has multiple GB, so RAM must be > 0 and a tier must be chosen.
           echo "$out" | grep -qE "Memory: [1-9][0-9]* GB" || { echo "::error::RAM not read from /proc/meminfo"; exit 1; }
-          echo "$out" | grep -qE "Tier:    (7b|14b|32b|70b)" || { echo "::error::no tier selected"; exit 1; }
+          echo "$out" | grep -qE "Tier:[[:space:]]+(7b|14b|32b|70b)" || { echo "::error::no tier selected"; exit 1; }
           echo "✓ Memory and tier resolved from real Linux hardware"

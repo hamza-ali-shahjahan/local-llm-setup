@@ -2,12 +2,16 @@
 #
 # local-llm-setup.sh — Zero-to-running local LLM in one command (macOS + Linux).
 #
-# Auto-detects your OS and hardware, picks models that actually fit your RAM,
-# installs the Ollama runtime, downloads the right models, sets a sane context
-# window, and runs a smoke test so you KNOW it works.
+# Auto-detects your OS and hardware (including an NVIDIA GPU, if present), picks
+# models that actually fit your machine, checks you have the disk space, installs
+# the Ollama runtime, downloads the right models, sets a sane context window, and
+# runs a smoke test so you KNOW it works — then offers to start chatting.
 #
 # Designed for someone doing this for the very first time. No prior knowledge
 # assumed. Nothing destructive — it only installs Ollama + the models you OK.
+#
+# Windows users: a native PowerShell version lives next to this file as
+# local-llm-setup.ps1 (no WSL needed). See the README.
 #
 # Usage:
 #   ./local-llm-setup.sh                  # interactive, recommended
@@ -15,9 +19,13 @@
 #   ./local-llm-setup.sh --dry-run        # show what it WOULD do, change nothing
 #   ./local-llm-setup.sh --tier 14b       # force a model tier (7b|14b|32b|70b)
 #   ./local-llm-setup.sh --platform linux # override OS auto-detect (mac|linux)
+#   ./local-llm-setup.sh --benchmark      # measure tokens/sec for installed models
+#   ./local-llm-setup.sh --uninstall      # remove the models this tool installs
+#   ./local-llm-setup.sh --version        # print the version and exit
 #   ./local-llm-setup.sh --help
 #
 set -euo pipefail
+VERSION="1.1.0"
 
 # ----------------------------------------------------------------------------
 # Pretty output (degrades gracefully if the terminal has no color)
@@ -68,14 +76,20 @@ ASSUME_YES=false
 DRY_RUN=false
 FORCE_TIER=""
 FORCE_OS=""
+MODE="setup"   # setup | benchmark | uninstall
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --yes|-y)    ASSUME_YES=true ;;
     --dry-run)   DRY_RUN=true ;;
     --tier)      FORCE_TIER="${2:-}"; shift ;;
     --platform)  FORCE_OS="${2:-}"; shift ;;
+    --benchmark) MODE="benchmark" ;;
+    --uninstall) MODE="uninstall" ;;
+    --version|-V) echo "local-llm-setup ${VERSION}"; exit 0 ;;
     --help|-h)
-      grep '^#' "$0" | sed 's/^# \{0,1\}//' | sed '/^!/d'
+      # Print only the header doc block (lines 2.. up to the first non-comment),
+      # not every '# ----' divider scattered through the file.
+      awk 'NR==1{next} /^#/{sub(/^# ?/,""); print; next} {exit}' "$0"
       exit 0 ;;
     *) err "Unknown option: $1"; exit 1 ;;
   esac
@@ -93,6 +107,18 @@ tier_models() {
     32b) echo "qwen2.5-coder:32b deepseek-r1:32b" ;;
     70b) echo "qwen2.5-coder:32b deepseek-r1:70b" ;;
     *)   echo "" ;;
+  esac
+}
+# Rough on-disk size (GB) of a tier's two models at Ollama's default quant.
+# The context-tuned *-Nk variants reuse the same content-addressed blobs, so
+# they add no meaningful disk — these numbers are the real download footprint.
+tier_disk_gb() {
+  case "$1" in
+    7b)  echo 10 ;;
+    14b) echo 19 ;;
+    32b) echo 40 ;;
+    70b) echo 63 ;;
+    *)   echo 0 ;;
   esac
 }
 CTX=8192   # default context window — big enough for real work, light on RAM
@@ -138,19 +164,127 @@ detect_ram_gb() {
     echo $(( kb / 1024 / 1024 ))
   fi
 }
+# Detect a dedicated NVIDIA GPU's VRAM (GB). Sets GPU_NAME + GPU_VRAM_GB.
+# Apple silicon shares one unified memory pool (already covered by RAM), and
+# AMD/Intel GPUs vary too much to size reliably here — both fall back to RAM.
+GPU_NAME=""
+GPU_VRAM_GB=0
+detect_gpu() {
+  command -v nvidia-smi >/dev/null 2>&1 || return 0
+  local line; line="$(nvidia-smi --query-gpu=name,memory.total --format=csv,noheader,nounits 2>/dev/null | head -1)"
+  [[ -z "$line" ]] && return 0
+  GPU_NAME="$(echo "$line" | awk -F', *' '{print $1}')"
+  local mb; mb="$(echo "$line" | awk -F', *' '{print $2}')"
+  [[ "$mb" =~ ^[0-9]+$ ]] && GPU_VRAM_GB=$(( mb / 1024 ))
+}
+# Free disk (GB) on the filesystem that holds Ollama's models, walking up to
+# the nearest existing parent if ~/.ollama doesn't exist yet. 0 means unknown.
+free_disk_gb() {
+  local d="${OLLAMA_MODELS:-$HOME/.ollama}"
+  while [[ ! -d "$d" && "$d" != "/" ]]; do d="$(dirname "$d")"; done
+  local kb; kb="$(df -Pk "$d" 2>/dev/null | awk 'NR==2{print $4}')"
+  [[ "$kb" =~ ^[0-9]+$ ]] || { echo 0; return; }
+  echo $(( kb / 1024 / 1024 ))
+}
 
 step "Checking your machine"
 CHIP="$(detect_chip)"
 RAM_GB="$(detect_ram_gb)"
+detect_gpu
 ok "Platform: ${BOLD}${OS}${RESET}"
 ok "Chip: ${BOLD}${CHIP}${RESET}"
 ok "Memory: ${BOLD}${RAM_GB} GB${RESET}"
+[[ -n "$GPU_NAME" ]] && ok "GPU: ${BOLD}${GPU_NAME}${RESET} (${GPU_VRAM_GB} GB VRAM)"
 
 # ----------------------------------------------------------------------------
-# 2. Recommend a tier from RAM (the OS itself needs ~4-8 GB headroom)
+# Maintenance modes (--benchmark / --uninstall): these act on what's already
+# installed and exit, so they run before the setup recommendation below.
 # ----------------------------------------------------------------------------
+# Every model this tool can install, across all tiers, plus the context-tuned
+# variant it bakes for each — used by --uninstall to know what's "ours".
+all_managed_models() {
+  local t m
+  for t in 7b 14b 32b 70b; do
+    for m in $(tier_models "$t"); do
+      echo "$m"
+      echo "${m%%:*}-$((CTX/1024))k"
+    done
+  done | sort -u
+}
+
+do_benchmark() {
+  step "Benchmark — tokens/sec for your installed models"
+  command -v ollama >/dev/null 2>&1 || { err "Ollama isn't installed yet. Run setup first."; exit 1; }
+  local models; models="$(ollama list 2>/dev/null | awk 'NR>1{print $1}')"
+  [[ -z "$models" ]] && { err "No models installed yet. Run ./local-llm-setup.sh first."; exit 1; }
+  say "  ${DIM}Each model writes one short sentence; we report its generation rate.${RESET}"
+  say ""
+  printf "  ${BOLD}%-34s %s${RESET}\n" "MODEL" "EVAL RATE"
+  local m rate
+  for m in $models; do
+    if $DRY_RUN; then say "${DIM}[dry-run] benchmark $m${RESET}"; continue; fi
+    rate="$(ollama run "$m" --verbose "Write one sentence about the sea." 2>&1 \
+            | awk -F': +' '/^[[:space:]]*eval rate/{print $2; exit}')"
+    printf "  %-34s %s\n" "$m" "${rate:-n/a}"
+  done
+  ok "Done."
+}
+
+do_uninstall() {
+  step "Uninstall — removing the models this tool installs"
+  command -v ollama >/dev/null 2>&1 || { ok "Ollama isn't installed — nothing to do."; exit 0; }
+  local installed=() m
+  while IFS= read -r m; do
+    ollama list 2>/dev/null | awk '{print $1}' | grep -qx "$m" && installed+=("$m")
+  done < <(all_managed_models)
+  if (( ${#installed[@]} == 0 )); then
+    ok "None of this tool's models are installed — nothing to remove."
+  else
+    say "  These models will be removed:"
+    for m in "${installed[@]}"; do say "    ${DIM}-${RESET} $m"; done
+    if $DRY_RUN; then
+      for m in "${installed[@]}"; do say "${DIM}[dry-run] ollama rm $m${RESET}"; done
+    elif ask "Remove the ${#installed[@]} model(s) above?" n; then
+      for m in "${installed[@]}"; do
+        if ollama rm "$m" >/dev/null 2>&1; then ok "Removed $m"; else warn "Could not remove $m"; fi
+      done
+    else
+      say "  Left models in place."
+    fi
+  fi
+  if ask "Also uninstall the Ollama runtime itself?" n; then
+    if $DRY_RUN; then
+      say "${DIM}[dry-run] uninstall the Ollama runtime${RESET}"
+    elif [[ "$OS" == "mac" ]] && command -v brew >/dev/null 2>&1; then
+      run "brew services stop ollama"; run "brew uninstall ollama"
+      ok "Ollama runtime removed."
+    else
+      warn "Automatic runtime removal isn't wired up on Linux."
+      say "  Official steps: ${DIM}https://github.com/ollama/ollama/blob/main/docs/linux.md#uninstall${RESET}"
+    fi
+  fi
+  ok "Uninstall complete."
+}
+
+case "$MODE" in
+  benchmark) do_benchmark; exit 0 ;;
+  uninstall) do_uninstall; exit 0 ;;
+esac
+
+# ----------------------------------------------------------------------------
+# 2. Recommend a tier from your hardware (the OS itself needs ~4-8 GB headroom)
+# ----------------------------------------------------------------------------
+BASIS="ram"
 if [[ -n "$FORCE_TIER" ]]; then
-  TIER="$FORCE_TIER"
+  TIER="$FORCE_TIER"; BASIS="forced"
+elif (( GPU_VRAM_GB >= 6 )); then
+  # A capable dedicated GPU runs the model from its own VRAM — size to that,
+  # not to system RAM (the usual constraint on GPU-less machines).
+  if   (( GPU_VRAM_GB <= 8 ));  then TIER="7b"
+  elif (( GPU_VRAM_GB <= 16 )); then TIER="14b"
+  elif (( GPU_VRAM_GB <= 32 )); then TIER="32b"
+  else                              TIER="70b"; fi
+  BASIS="gpu"
 elif (( RAM_GB <= 16 )); then TIER="7b"
 elif (( RAM_GB <= 32 )); then TIER="14b"
 elif (( RAM_GB <= 64 )); then TIER="32b"
@@ -160,13 +294,35 @@ fi
 MODELS="$(tier_models "$TIER")"
 if [[ -z "$MODELS" ]]; then err "Unknown tier '$TIER' (use 7b|14b|32b|70b)"; exit 1; fi
 
-step "Recommended setup for ${RAM_GB} GB"
-say "  Tier:    ${BOLD}${TIER}${RESET}  (best fit for your memory)"
-say "  Models:  ${BOLD}${MODELS}${RESET}"
-say "  Context: ${BOLD}${CTX}${RESET} tokens  ${DIM}(keeps RAM use sane)${RESET}"
+EST_GB="$(tier_disk_gb "$TIER")"
+FREE_GB="$(free_disk_gb)"
+
+step "Recommended setup"
+case "$BASIS" in
+  gpu)    say "  Tier:     ${BOLD}${TIER}${RESET}  ${DIM}(sized to your ${GPU_VRAM_GB} GB GPU — the fast path)${RESET}" ;;
+  forced) say "  Tier:     ${BOLD}${TIER}${RESET}  ${DIM}(forced via --tier)${RESET}" ;;
+  *)      say "  Tier:     ${BOLD}${TIER}${RESET}  ${DIM}(sized to your ${RAM_GB} GB of memory)${RESET}" ;;
+esac
+say "  Models:   ${BOLD}${MODELS}${RESET}"
+say "  Context:  ${BOLD}${CTX}${RESET} tokens  ${DIM}(keeps memory use sane)${RESET}"
+if (( FREE_GB > 0 )); then
+  say "  Download: ${BOLD}~${EST_GB} GB${RESET}  ${DIM}(you have ${FREE_GB} GB free)${RESET}"
+else
+  say "  Download: ${BOLD}~${EST_GB} GB${RESET}"
+fi
 say ""
-say "  ${DIM}A larger context window or bigger model eats RAM fast. These"
+say "  ${DIM}A larger context window or bigger model eats memory fast. These"
 say "  defaults are tuned to run smoothly, not to max out your machine.${RESET}"
+
+# Disk preflight — running out of space mid-download is the worst failure mode,
+# so catch it before a single byte is pulled.
+if (( FREE_GB > 0 && FREE_GB < EST_GB )); then
+  err "Not enough free disk: this tier needs ~${EST_GB} GB but only ${FREE_GB} GB is free."
+  say "  Free up space, or pick a smaller tier:  ${DIM}./local-llm-setup.sh --tier 7b${RESET}"
+  exit 1
+elif (( FREE_GB > 0 && FREE_GB < EST_GB + EST_GB/5 + 2 )); then
+  warn "Disk is tight (~${EST_GB} GB needed, ${FREE_GB} GB free). It should fit, but only just."
+fi
 
 ask "Proceed with this setup?" y || { warn "Stopped. Re-run with --tier to override."; exit 0; }
 
@@ -298,7 +454,8 @@ TEST_MODEL="$(echo "$MODELS" | awk '{print $1}')"
 if $DRY_RUN; then
   say "${DIM}[dry-run] ollama run $TEST_MODEL 'Say hello in one short sentence.'${RESET}"
 else
-  say "Asking ${BOLD}$TEST_MODEL${RESET} a quick question...\n"
+  say "Asking ${BOLD}$TEST_MODEL${RESET} a quick question..."
+  say ""
   if ollama run "$TEST_MODEL" --verbose "Say hello in one short sentence, then stop." 2>&1; then
     ok "It works. Look for the 'eval rate' above — that's your tokens/second."
   else
@@ -309,11 +466,18 @@ fi
 # ----------------------------------------------------------------------------
 # 9. What to do next
 # ----------------------------------------------------------------------------
+# Prefer the context-tuned variant for daily use, if it got created.
+CHAT_MODEL="$TEST_MODEL"
+CHAT_ALIAS="${TEST_MODEL%%:*}-$((CTX/1024))k"
+if ! $DRY_RUN && ollama list 2>/dev/null | awk '{print $1}' | grep -qx "$CHAT_ALIAS"; then
+  CHAT_MODEL="$CHAT_ALIAS"
+fi
+
 step "You're set up. Here's how to use it:"
 cat <<EOF
 
   ${BOLD}Chat in the terminal:${RESET}
-    ollama run ${TEST_MODEL}
+    ollama run ${CHAT_MODEL}
 
   ${BOLD}Your context-tuned models${RESET} (use these in daily work):
 $(for m in $MODELS; do echo "    ${m%%:*}-$((CTX/1024))k"; done)
@@ -326,7 +490,19 @@ $(for m in $MODELS; do echo "    ${m%%:*}-$((CTX/1024))k"; done)
   ${BOLD}See everything you have:${RESET}
     ollama list
 
-  ${DIM}Models live in ~/.ollama. Delete one with:  ollama rm <model>${RESET}
+  ${BOLD}Compare model speeds anytime:${RESET}
+    ./local-llm-setup.sh --benchmark
+
+  ${DIM}Models live in ~/.ollama. Remove this tool's models with:  ./local-llm-setup.sh --uninstall${RESET}
 
 EOF
+
+# Offer to jump straight into a chat — the most intuitive way to start exploring.
+# Only when interactive (a real terminal, not --yes / not piped / not a dry-run).
+if ! $ASSUME_YES && ! $DRY_RUN && [[ -t 0 && -t 1 ]]; then
+  if ask "Start chatting with ${CHAT_MODEL} now? (type /bye to leave)" y; then
+    say ""
+    ollama run "$CHAT_MODEL"
+  fi
+fi
 ok "Done."
