@@ -4,6 +4,19 @@ All notable changes to this project are documented here. Format based on
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/); this project aims to
 follow [Semantic Versioning](https://semver.org/).
 
+## [1.2.0] — 2026-06-14
+
+### Added
+- **`--lean` / `-Lean`** — optionally bake a minimal-code coder variant
+  (`<coder>-<size>-lean`, e.g. `qwen2.5-coder-14b-lean`) with a "ponytail"
+  system prompt that steers the model to the simplest solution (YAGNI → stdlib
+  → platform feature → one line). Especially valuable on a local model: less
+  code = fewer output tokens, faster, and more room in the context window. In a
+  side-by-side on `qwen2.5-coder:14b`, the lean variant wrote ~45% fewer lines
+  for the same task. System prompt adapted from
+  [ponytail](https://github.com/DietrichGebert/ponytail) (MIT). `--uninstall`
+  removes the lean variants too.
+
 ## [1.1.1] — 2026-06-14
 
 ### Fixed
@@ -105,6 +118,7 @@ First public release.
 - Full community profile: README, MIT license, CONTRIBUTING, CODE_OF_CONDUCT,
   SECURITY, issue + PR templates.
 
+[1.2.0]: https://github.com/hamza-ali-shahjahan/local-llm-setup/releases/tag/v1.2.0
 [1.1.1]: https://github.com/hamza-ali-shahjahan/local-llm-setup/releases/tag/v1.1.1
 [1.1.0]: https://github.com/hamza-ali-shahjahan/local-llm-setup/releases/tag/v1.1.0
 [1.0.1]: https://github.com/hamza-ali-shahjahan/local-llm-setup/releases/tag/v1.0.1

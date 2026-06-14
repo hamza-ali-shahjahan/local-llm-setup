@@ -19,13 +19,14 @@
 #   ./local-llm-setup.sh --dry-run        # show what it WOULD do, change nothing
 #   ./local-llm-setup.sh --tier 14b       # force a model tier (7b|14b|32b|70b)
 #   ./local-llm-setup.sh --platform linux # override OS auto-detect (mac|linux)
+#   ./local-llm-setup.sh --lean           # also bake a minimal-code "ponytail" coder variant
 #   ./local-llm-setup.sh --benchmark      # measure tokens/sec for installed models
 #   ./local-llm-setup.sh --uninstall      # remove the models this tool installs
 #   ./local-llm-setup.sh --version        # print the version and exit
 #   ./local-llm-setup.sh --help
 #
 set -euo pipefail
-VERSION="1.1.1"
+VERSION="1.2.0"
 
 # ----------------------------------------------------------------------------
 # Pretty output (degrades gracefully if the terminal has no color)
@@ -76,6 +77,7 @@ ASSUME_YES=false
 DRY_RUN=false
 FORCE_TIER=""
 FORCE_OS=""
+LEAN=false
 MODE="setup"   # setup | benchmark | uninstall
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -83,6 +85,7 @@ while [[ $# -gt 0 ]]; do
     --dry-run)   DRY_RUN=true ;;
     --tier)      FORCE_TIER="${2:-}"; shift ;;
     --platform)  FORCE_OS="${2:-}"; shift ;;
+    --lean)      LEAN=true ;;
     --benchmark) MODE="benchmark" ;;
     --uninstall) MODE="uninstall" ;;
     --version|-V) echo "local-llm-setup ${VERSION}"; exit 0 ;;
@@ -128,6 +131,38 @@ CTX=8192   # default context window — big enough for real work, light on RAM
 # The size is kept in the name on purpose: running the script at a different
 # tier later (say 7b) then won't silently overwrite an earlier tier's variant.
 ctx_alias() { echo "${1/:/-}-$((CTX/1024))k"; }
+
+# Name of the optional --lean (ponytail) variant for a coder model, e.g.
+#   qwen2.5-coder:14b  ->  qwen2.5-coder-14b-lean
+lean_alias() { echo "${1/:/-}-lean"; }
+
+# Write a Modelfile (path $1) for a lean coder variant of model $2: the tuned
+# context window plus a minimal-code system prompt adapted from ponytail
+# (https://github.com/DietrichGebert/ponytail, MIT). Steering the model to the
+# simplest solution pays off most on a small local model — less code means
+# fewer tokens, faster output, and more room in the context window.
+write_lean_modelfile() {
+  { printf 'FROM %s\nPARAMETER num_ctx %s\nSYSTEM """' "$2" "$CTX"
+    cat <<'PONYTAIL'
+You are a lazy senior developer. Lazy means efficient, not careless. The best code is the code never written.
+
+Before writing any code, stop at the first rung that holds:
+1. Does this need to be built at all? (YAGNI)
+2. Does the standard library already do this? Use it.
+3. Does a native platform feature cover it? Use it.
+4. Does an already-installed dependency solve it? Use it.
+5. Can this be one line? Make it one line.
+6. Only then: write the minimum code that works.
+
+Rules:
+- No abstractions that weren't explicitly requested. No new dependency if avoidable. No boilerplate.
+- Deletion over addition. Boring over clever. Fewest files possible.
+- Mark intentional simplifications with a `ponytail:` comment naming any ceiling and upgrade path.
+Not lazy about: input validation at trust boundaries, error handling, security, accessibility, anything explicitly requested.
+PONYTAIL
+    printf '"""\n'
+  } > "$1"
+}
 
 # Installed model names, with the implicit ":latest" tag stripped. `ollama
 # create` tags a variant ":latest", so `ollama list` prints e.g.
@@ -221,6 +256,7 @@ all_managed_models() {
       echo "$m"
       echo "$(ctx_alias "$m")"            # current naming, e.g. qwen2.5-coder-14b-8k
       echo "${m%%:*}-$((CTX/1024))k"      # legacy pre-1.1.1 naming, e.g. qwen2.5-coder-8k
+      [[ "$m" == *coder* ]] && echo "$(lean_alias "$m")"   # optional --lean variant
     done
   done | sort -u
 }
@@ -460,6 +496,28 @@ for m in $MODELS; do
 done
 
 # ----------------------------------------------------------------------------
+# 7b. Optional --lean: a minimal-code "ponytail" coder variant
+# ----------------------------------------------------------------------------
+if $LEAN; then
+  step "Baking lean coder variant (ponytail)"
+  for m in $MODELS; do
+    [[ "$m" == *coder* ]] || continue
+    lname="$(lean_alias "$m")"
+    if $DRY_RUN; then
+      say "${DIM}[dry-run] create $lname from $m (num_ctx=$CTX + ponytail minimal-code prompt)${RESET}"; continue
+    fi
+    lmf="$(mktemp -t modelfile.XXXXXX)"
+    write_lean_modelfile "$lmf" "$m"
+    if ollama create "$lname" -f "$lmf" >/dev/null 2>&1; then
+      ok "Created ${BOLD}$lname${RESET} (writes minimal code — a big win on a small local model)"
+    else
+      warn "Could not create $lname (you can still use $m directly)"
+    fi
+    rm -f "$lmf"
+  done
+fi
+
+# ----------------------------------------------------------------------------
 # 8. Smoke test — prove it actually works and show speed
 # ----------------------------------------------------------------------------
 step "Smoke test"
@@ -509,6 +567,17 @@ $(for m in $MODELS; do echo "    $(ctx_alias "$m")"; done)
   ${DIM}Models live in ~/.ollama. Remove this tool's models with:  ./local-llm-setup.sh --uninstall${RESET}
 
 EOF
+
+# Surface the lean coder variant, if --lean built one.
+if $LEAN && ! $DRY_RUN; then
+  for m in $MODELS; do
+    [[ "$m" == *coder* ]] || continue
+    installed_models | grep -qx "$(lean_alias "$m")" || continue
+    say "  ${BOLD}Lean coder${RESET} (ponytail — writes minimal code):"
+    say "    ollama run $(lean_alias "$m")"
+    say ""
+  done
+fi
 
 # Offer to jump straight into a chat — the most intuitive way to start exploring.
 # Only when interactive (a real terminal, not --yes / not piped / not a dry-run).

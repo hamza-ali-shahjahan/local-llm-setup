@@ -185,11 +185,24 @@ macOS / Linux use `--flag`; Windows PowerShell uses `-Flag`. Same behavior eithe
 | `--dry-run` | `-DryRun` | Print the full plan; change nothing |
 | `--yes`, `-y` | `-Yes` | Accept all defaults, no prompts (unattended) |
 | `--tier <t>` | `-Tier <t>` | Force a model tier (`7b`, `14b`, `32b`, `70b`) |
+| `--lean` | `-Lean` | Also bake a minimal-code "ponytail" coder variant (see below) |
 | `--benchmark` | `-Benchmark` | Measure tokens/sec for every installed model |
 | `--uninstall` | `-Uninstall` | Remove the models this tool installs (asks first) |
 | `--platform <os>` | — | Override OS auto-detect (`mac`, `linux`) |
 | `--version` | `-Version` | Print the version and exit |
 | `--help`, `-h` | `-Help` | Show usage |
+
+## Lean coder (ponytail) — optional `--lean`
+
+Pass `--lean` (`-Lean` on Windows) and the script bakes an extra coder variant — `qwen2.5-coder-14b-lean` — with a "write the minimum code" system prompt. It walks the model down a ladder before it writes anything: *does this need to exist? → standard library? → platform feature? → can it be one line? → only then, minimal code.*
+
+This matters most **on a local model**: less generated code means fewer output tokens, faster responses, and more room in your tight context window. In a side-by-side on the same prompt, the lean variant wrote **~45% fewer lines** than the plain model — and cleaner code.
+
+```bash
+ollama run qwen2.5-coder-14b-lean     # the minimal-code coder
+```
+
+The system prompt is adapted from [ponytail](https://github.com/DietrichGebert/ponytail) (MIT) — *"the best code is the code you never wrote."*
 
 ## After setup
 

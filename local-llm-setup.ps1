@@ -17,6 +17,7 @@ Usage (PowerShell):
   .\local-llm-setup.ps1 -Yes            # accept all defaults, no prompts
   .\local-llm-setup.ps1 -DryRun         # show what it WOULD do, change nothing
   .\local-llm-setup.ps1 -Tier 14b       # force a model tier (7b|14b|32b|70b)
+  .\local-llm-setup.ps1 -Lean           # also bake a minimal-code "ponytail" coder variant
   .\local-llm-setup.ps1 -Benchmark      # measure tokens/sec for installed models
   .\local-llm-setup.ps1 -Uninstall      # remove the models this tool installs
   .\local-llm-setup.ps1 -Version        # print the version and exit
@@ -31,13 +32,14 @@ param(
   [switch]$Yes,
   [switch]$DryRun,
   [string]$Tier,
+  [switch]$Lean,
   [switch]$Benchmark,
   [switch]$Uninstall,
   [switch]$Version,
   [switch]$Help
 )
 
-$AppVersion = '1.1.1'   # NB: not $Version — that name is the -Version switch param
+$AppVersion = '1.2.0'   # NB: not $Version — that name is the -Version switch param
 $Ctx = 8192             # default context window — big enough for real work, light on RAM
 
 # Name of the context-tuned variant for a model tag (the size is kept in the
@@ -47,6 +49,35 @@ function Get-CtxAlias {
   param([string]$m)
   "$($m -replace ':','-')-$([int]($Ctx/1024))k"
 }
+
+# Name of the optional -Lean (ponytail) variant for a coder model, e.g.
+#   qwen2.5-coder:14b  ->  qwen2.5-coder-14b-lean
+function Get-LeanAlias {
+  param([string]$m)
+  "$($m -replace ':','-')-lean"
+}
+
+# Minimal-code system prompt, adapted from ponytail
+# (https://github.com/DietrichGebert/ponytail, MIT). Steers the coder model to
+# the simplest solution — pays off most on a small local model (less code =
+# fewer tokens, faster, fits the context window).
+$PonytailSystem = @'
+You are a lazy senior developer. Lazy means efficient, not careless. The best code is the code never written.
+
+Before writing any code, stop at the first rung that holds:
+1. Does this need to be built at all? (YAGNI)
+2. Does the standard library already do this? Use it.
+3. Does a native platform feature cover it? Use it.
+4. Does an already-installed dependency solve it? Use it.
+5. Can this be one line? Make it one line.
+6. Only then: write the minimum code that works.
+
+Rules:
+- No abstractions that weren't explicitly requested. No new dependency if avoidable. No boilerplate.
+- Deletion over addition. Boring over clever. Fewest files possible.
+- Mark intentional simplifications with a `ponytail:` comment naming any ceiling and upgrade path.
+Not lazy about: input validation at trust boundaries, error handling, security, accessibility, anything explicitly requested.
+'@
 
 # ----------------------------------------------------------------------------
 # Pretty output
@@ -188,6 +219,7 @@ function Get-ManagedModels {
       $out.Add($m)
       $out.Add((Get-CtxAlias $m))                              # current naming
       $out.Add("$($m.Split(':')[0])-$([int]($Ctx/1024))k")     # legacy pre-1.1.1 naming
+      if ($m -like '*coder*') { $out.Add((Get-LeanAlias $m)) } # optional -Lean variant
     }
   }
   $out | Sort-Object -Unique
@@ -405,6 +437,30 @@ foreach ($m in $Models) {
 }
 
 # ----------------------------------------------------------------------------
+# Optional -Lean: a minimal-code "ponytail" coder variant
+# ----------------------------------------------------------------------------
+if ($Lean) {
+  Step 'Baking lean coder variant (ponytail)'
+  foreach ($m in $Models) {
+    if ($m -notlike '*coder*') { continue }
+    $lname = Get-LeanAlias $m
+    if ($DryRun) { Say "[dry-run] create $lname from $m (num_ctx=$Ctx + ponytail minimal-code prompt)"; continue }
+    $lmf = New-TemporaryFile
+    @"
+FROM $m
+PARAMETER num_ctx $Ctx
+SYSTEM """
+$PonytailSystem
+"""
+"@ | Set-Content -LiteralPath $lmf.FullName -Encoding ascii
+    & ollama create $lname -f $lmf.FullName 2>$null | Out-Null
+    if ($LASTEXITCODE -eq 0) { Ok "Created $lname (writes minimal code — a big win on a small local model)" }
+    else { Warn "Could not create $lname (you can still use $m directly)" }
+    Remove-Item -LiteralPath $lmf.FullName -ErrorAction SilentlyContinue
+  }
+}
+
+# ----------------------------------------------------------------------------
 # Smoke test
 # ----------------------------------------------------------------------------
 Step 'Smoke test'
@@ -434,6 +490,15 @@ Say ''
 Say "  Your context-tuned models (use these in daily work):"
 foreach ($m in $Models) { Say "    $(Get-CtxAlias $m)" }
 Say ''
+if ($Lean -and -not $DryRun) {
+  foreach ($m in $Models) {
+    if ($m -notlike '*coder*') { continue }
+    if (-not (Test-ModelInstalled (Get-LeanAlias $m))) { continue }
+    Say "  Lean coder (ponytail — writes minimal code):"
+    Say "    ollama run $(Get-LeanAlias $m)"
+    Say ''
+  }
+}
 Say "  Point an app or agent at it (OpenAI-compatible API):"
 Say "    Base URL:  http://localhost:11434/v1"
 Say "    API key:   ollama        (any non-empty string works)"
