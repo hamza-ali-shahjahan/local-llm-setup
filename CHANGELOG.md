@@ -30,6 +30,11 @@ needs. Backward compatible — every existing flag behaves exactly as before.
 - **`--version`** (`-Version`): print the version and exit.
 - CI: a real `windows-latest` parse + dry-run smoke test, alongside the existing
   Linux one.
+- A **demo GIF** in the README (a real `--dry-run`) showing the live hardware
+  detection and sized model plan. Reproducible via [`assets/demo.tape`](assets/demo.tape).
+
+### Changed
+- Bumped `actions/checkout` to `v5` across all workflows (Node 24).
 
 ### Fixed
 - **`--help` no longer dumps the whole file.** It printed every `#`-prefixed

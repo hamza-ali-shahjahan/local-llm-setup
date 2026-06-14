@@ -12,6 +12,12 @@ This collapses all of it into **one command that asks you nothing it can figure 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 ![Platform: macOS + Linux + Windows](https://img.shields.io/badge/platform-macOS%20%2B%20Linux%20%2B%20Windows-lightgrey.svg)
 
+<p align="center">
+  <img src="assets/demo.gif" alt="local-llm-setup auto-detecting the machine and recommending a model plan sized to its memory" width="760">
+</p>
+
+<p align="center"><em>One command reads your hardware and proposes a model plan that fits — shown here as a <code>--dry-run</code>, so nothing is installed or downloaded.</em></p>
+
 ### From 12 steps to 1
 
 | Setting it up by hand | This script |
@@ -56,97 +62,93 @@ It then checks you have the disk space, installs Ollama, pulls those models, bak
 
 ## Quickstart
 
-### First: where do these commands go?
+**Find your machine below, open the app it names, and paste the one command.** That's the whole setup — it downloads the script and runs it. No prior command-line experience needed.
 
-These are **Terminal** commands — they run in your computer's built-in command-line app. Not in a web browser, not in ChatGPT or Claude, not in an IDE's search box. Just the plain Terminal. If you've never opened it, here's how:
+> These commands run in your computer's built-in command app (Terminal or PowerShell) — **not** in a web browser, ChatGPT, Claude, or an IDE search box. The steps below tell you exactly which app to open and where to find it.
 
-**On a Mac**
+### 🍎 Mac &nbsp;·&nbsp; 🐧 Linux
 
-1. Press **⌘ Command + Spacebar** to open Spotlight search (a search box appears in the middle of the screen).
-2. Type **`Terminal`** and press **Return**.
-3. A window opens with a line ending in `%` or `$` and a blinking cursor. That's the prompt — it's waiting for you to type. You're in the right place.
+**1. Open the Terminal.**
 
-**On Linux**
+- **Mac:** press **⌘ Command + Spacebar**, type **`Terminal`**, press **Return**.
+- **Linux:** open your apps menu and search **`Terminal`** (on most desktops **Ctrl + Alt + T** opens it directly).
 
-1. Open your applications menu and search for **`Terminal`** (on many desktops **Ctrl + Alt + T** opens it directly).
-2. A window opens with a prompt ending in `$`. That's it.
+A window opens with a prompt ending in `%` or `$` and a blinking cursor — that's it waiting for you.
 
-**How to run a command:** copy a command from below, click into the Terminal window, paste it (**⌘ Command + V** on Mac, **Ctrl + Shift + V** on Linux), and press **Return / Enter**. The command runs; when it finishes, the prompt comes back and you can paste the next one.
-
-> New to the terminal? It won't ask "are you sure?" the way apps do — pressing Enter runs the command immediately. That's normal. Everything below is safe, asks before installing anything, and `--dry-run` (further down) shows you the full plan without changing a thing.
-
-### Then: the one command
-
-**The one command — this is the whole thing:**
+**2. Paste this one command and press Return.**
 
 ```bash
-./local-llm-setup.sh
+curl -fsSL https://raw.githubusercontent.com/hamza-ali-shahjahan/local-llm-setup/main/local-llm-setup.sh -o local-llm-setup.sh && bash local-llm-setup.sh
 ```
 
-That single command does everything on the list above: checks your machine, installs the runtime, picks and pulls the right model, tunes the context window, and smoke-tests it — asking nothing it can figure out for itself.
+To paste: **⌘ Command + V** (Mac) or **Ctrl + Shift + V** (Linux). It downloads the script next to you and runs it — checking your machine, installing the runtime, pulling the right model, and smoke-testing it. It asks before installing anything.
 
-The only thing to do first is get that file onto your machine. It's a good habit to read any script from the internet before running it, so the steps below download it, (optionally) let you read it, then run the one command:
+<details>
+<summary><b>Rather see the full plan first, without changing anything?</b></summary>
 
-**1. Download the script**
+This downloads the script and prints exactly what it *would* do — no installs, no downloads, nothing touched:
 
 ```bash
+curl -fsSL https://raw.githubusercontent.com/hamza-ali-shahjahan/local-llm-setup/main/local-llm-setup.sh -o local-llm-setup.sh && bash local-llm-setup.sh --dry-run
+```
+</details>
+
+<details>
+<summary><b>Rather read the script line by line before running it? (encouraged)</b></summary>
+
+```bash
+# 1. Download it
 curl -fsSL https://raw.githubusercontent.com/hamza-ali-shahjahan/local-llm-setup/main/local-llm-setup.sh -o local-llm-setup.sh
-```
 
-**2. Read it (optional but encouraged)**
-
-```bash
+# 2. Read it (press q to quit)
 less local-llm-setup.sh
+
+# 3. Run it
+bash local-llm-setup.sh
 ```
+</details>
 
-**3. Run the one command**
+### 🪟 Windows &nbsp;<sub>(native — no WSL needed)</sub>
 
-```bash
-chmod +x local-llm-setup.sh   # make it runnable (one time only)
-./local-llm-setup.sh          # 👈 THE one command — does all 12 steps
-```
+Windows has its own one command, [`local-llm-setup.ps1`](local-llm-setup.ps1). It runs Ollama **natively**, so your GPU is used for real — no WSL, no virtual machine.
 
-Prefer to look before anything happens? Run a no-op preview that changes nothing:
+**1. Open PowerShell.**
 
-```bash
-./local-llm-setup.sh --dry-run
-```
+Click **Start**, type **`PowerShell`**, and click **Windows PowerShell**. A blue window opens with a prompt ending in `>`.
 
-### Windows (native — no WSL needed)
-
-Windows has its own one command: [`local-llm-setup.ps1`](local-llm-setup.ps1). It runs Ollama **natively**, so your GPU is used for real — no WSL, no virtual machine. Open **PowerShell** (search the Start menu for it) and follow these steps.
-
-**1. Download the script**
+**2. Paste this one command and press Enter.**
 
 ```powershell
-Invoke-WebRequest -Uri https://raw.githubusercontent.com/hamza-ali-shahjahan/local-llm-setup/main/local-llm-setup.ps1 -OutFile local-llm-setup.ps1
+Invoke-WebRequest -Uri https://raw.githubusercontent.com/hamza-ali-shahjahan/local-llm-setup/main/local-llm-setup.ps1 -OutFile local-llm-setup.ps1; Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force; .\local-llm-setup.ps1
 ```
 
-**2. Read it (optional but encouraged)**
-
-```powershell
-notepad local-llm-setup.ps1
-```
-
-**3. Allow this one script to run, then run it**
-
-Windows blocks downloaded scripts by default. This line lifts that **for the current window only** (it resets when you close it):
-
-```powershell
-Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
-```
-
-```powershell
-.\local-llm-setup.ps1
-```
-
-You should see the same `==> Checking your machine` flow as the screenshot above. Want a no-op preview first?
-
-```powershell
-.\local-llm-setup.ps1 -DryRun
-```
+To paste: **Ctrl + V** (or right-click the window). This downloads the script, allows it to run **for this window only** (Windows blocks downloaded scripts by default), and runs it. It asks before installing anything.
 
 > If `winget` isn't on your machine, the script downloads the official Ollama installer instead and runs it for you — either way you don't have to find anything yourself.
+
+<details>
+<summary><b>Rather see the full plan first, without changing anything?</b></summary>
+
+```powershell
+Invoke-WebRequest -Uri https://raw.githubusercontent.com/hamza-ali-shahjahan/local-llm-setup/main/local-llm-setup.ps1 -OutFile local-llm-setup.ps1; Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force; .\local-llm-setup.ps1 -DryRun
+```
+</details>
+
+<details>
+<summary><b>Rather read the script before running it? (encouraged)</b></summary>
+
+```powershell
+# 1. Download it
+Invoke-WebRequest -Uri https://raw.githubusercontent.com/hamza-ali-shahjahan/local-llm-setup/main/local-llm-setup.ps1 -OutFile local-llm-setup.ps1
+
+# 2. Read it (opens in Notepad)
+notepad local-llm-setup.ps1
+
+# 3. Allow this one script to run for the current window, then run it
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+.\local-llm-setup.ps1
+```
+</details>
 
 ## What it installs
 
