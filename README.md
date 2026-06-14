@@ -150,6 +150,8 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 ```
 </details>
 
+> **Got an NVIDIA GPU?** The script sizes the model to your VRAM and runs Ollama natively. To confirm it's really using the GPU, follow [docs/verify-windows-gpu.md](docs/verify-windows-gpu.md) — a ~5-minute check.
+
 ## What it installs
 
 | Component | What it is | Why |
