@@ -5,7 +5,7 @@
 # Auto-detects your OS and hardware (including an NVIDIA GPU, if present), picks
 # models that actually fit your machine, checks you have the disk space, installs
 # the Ollama runtime, downloads the right models, sets a sane context window, and
-# runs a smoke test so you KNOW it works — then offers to start chatting.
+# runs a smoke test so you KNOW it works — then offers a browser chat + editor.
 #
 # Designed for someone doing this for the very first time. No prior knowledge
 # assumed. Nothing destructive — it only installs Ollama + the models you OK.
@@ -20,13 +20,15 @@
 #   ./local-llm-setup.sh --tier 14b       # force a model tier (7b|14b|32b|70b)
 #   ./local-llm-setup.sh --platform linux # override OS auto-detect (mac|linux)
 #   ./local-llm-setup.sh --lean           # also bake a minimal-code "ponytail" coder variant
+#   ./local-llm-setup.sh --chat           # open a local chat in your browser (no extra installs)
+#   ./local-llm-setup.sh --editor         # set up Continue in VS Code / Cursor for your local models
 #   ./local-llm-setup.sh --benchmark      # measure tokens/sec for installed models
 #   ./local-llm-setup.sh --uninstall      # remove the models this tool installs
 #   ./local-llm-setup.sh --version        # print the version and exit
 #   ./local-llm-setup.sh --help
 #
 set -euo pipefail
-VERSION="1.2.0"
+VERSION="1.3.0"
 
 # ----------------------------------------------------------------------------
 # Pretty output (degrades gracefully if the terminal has no color)
@@ -86,6 +88,8 @@ while [[ $# -gt 0 ]]; do
     --tier)      FORCE_TIER="${2:-}"; shift ;;
     --platform)  FORCE_OS="${2:-}"; shift ;;
     --lean)      LEAN=true ;;
+    --chat)      MODE="chat" ;;
+    --editor)    MODE="editor" ;;
     --benchmark) MODE="benchmark" ;;
     --uninstall) MODE="uninstall" ;;
     --version|-V) echo "local-llm-setup ${VERSION}"; exit 0 ;;
@@ -125,6 +129,8 @@ tier_disk_gb() {
   esac
 }
 CTX=8192   # default context window — big enough for real work, light on RAM
+CHAT_DIR="${HOME}/.local-llm-setup/chat"   # where the bundled chat page is written
+CHAT_PORT=8765                              # localhost port the chat page is served on
 
 # Name of the context-tuned variant for a model tag, e.g.
 #   qwen2.5-coder:14b  ->  qwen2.5-coder-14b-8k
@@ -315,9 +321,311 @@ do_uninstall() {
   ok "Uninstall complete."
 }
 
+# ----------------------------------------------------------------------------
+# Chat + editor helpers (used by --chat / --editor and offered after setup)
+# ----------------------------------------------------------------------------
+# Open a URL in the default browser (degrades to printing it).
+open_url() {
+  if [[ "$OS" == "mac" ]]; then open "$1" >/dev/null 2>&1 || true
+  elif command -v xdg-open >/dev/null 2>&1; then xdg-open "$1" >/dev/null 2>&1 || true
+  else say "  Open this in your browser:  ${BOLD}$1${RESET}"; fi
+}
+
+# Write the self-contained local chat page to $1. It talks to Ollama's local
+# API; served from localhost (which Ollama allows by default) it needs no
+# Docker and no extra install, and does NOT expose Ollama to the wider web.
+write_chat_html() {
+  cat > "$1" <<'CHATHTML'
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Local LLM Chat</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; height: 100vh; display: flex; flex-direction: column;
+    font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: #0d1017; color: #e6e6e6;
+  }
+  header {
+    display: flex; align-items: center; gap: 12px;
+    padding: 12px 18px; border-bottom: 1px solid #1e2430; background: #11151d;
+  }
+  header h1 { font-size: 15px; margin: 0; font-weight: 600; color: #cfe3ff; }
+  header .dot { width: 8px; height: 8px; border-radius: 50%; background: #2ecc71; box-shadow: 0 0 8px #2ecc71; }
+  select {
+    margin-left: auto; background: #0d1017; color: #e6e6e6;
+    border: 1px solid #2a3140; border-radius: 8px; padding: 6px 10px; font-size: 13px;
+  }
+  #log { flex: 1; overflow-y: auto; padding: 24px 0; }
+  .wrap { max-width: 760px; margin: 0 auto; padding: 0 18px; }
+  .msg { display: flex; gap: 12px; margin: 0 0 22px; }
+  .msg .who {
+    flex: none; width: 30px; height: 30px; border-radius: 7px; font-size: 13px;
+    display: flex; align-items: center; justify-content: center; font-weight: 700;
+  }
+  .msg.user .who { background: #2b4a78; color: #dbe9ff; }
+  .msg.bot  .who { background: #1d3a2a; color: #aef0c4; }
+  .msg .body { padding-top: 4px; white-space: pre-wrap; word-wrap: break-word; min-width: 0; }
+  .msg .body pre {
+    background: #0a0d13; border: 1px solid #1e2430; border-radius: 8px;
+    padding: 12px 14px; overflow-x: auto; white-space: pre;
+  }
+  .msg .body code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
+  .msg .body :not(pre) > code { background: #1a1f29; padding: 1px 5px; border-radius: 4px; }
+  .think { color: #7d8694; font-style: italic; border-left: 2px solid #2a3140; padding-left: 10px; margin: 6px 0; }
+  footer { border-top: 1px solid #1e2430; background: #11151d; padding: 12px 0 16px; }
+  .inrow { display: flex; gap: 10px; align-items: flex-end; }
+  textarea {
+    flex: 1; resize: none; background: #0d1017; color: #e6e6e6; border: 1px solid #2a3140;
+    border-radius: 10px; padding: 11px 13px; font: inherit; max-height: 180px;
+  }
+  button {
+    background: #2b6cff; color: #fff; border: 0; border-radius: 10px;
+    padding: 11px 18px; font-weight: 600; cursor: pointer;
+  }
+  button:disabled { opacity: .5; cursor: default; }
+  .hint { color: #5b6472; font-size: 12px; text-align: center; margin-top: 8px; }
+  .empty { text-align: center; color: #5b6472; margin-top: 12vh; }
+  .empty h2 { color: #aab4c4; font-weight: 600; }
+</style>
+</head>
+<body>
+  <header>
+    <span class="dot" id="dot"></span>
+    <h1>Local LLM Chat</h1>
+    <select id="model" title="Choose a model"></select>
+  </header>
+  <div id="log">
+    <div class="wrap" id="logwrap">
+      <div class="empty" id="empty">
+        <h2>Chat with a model running on your machine</h2>
+        <div>100% local — nothing leaves this computer.</div>
+      </div>
+    </div>
+  </div>
+  <footer>
+    <div class="wrap">
+      <div class="inrow">
+        <textarea id="input" rows="1" placeholder="Message your local model...  (Enter to send, Shift+Enter for a new line)"></textarea>
+        <button id="send">Send</button>
+      </div>
+      <div class="hint" id="hint">Talking to Ollama at http://localhost:11434</div>
+    </div>
+  </footer>
+<script>
+const API = "http://localhost:11434";
+const logwrap = document.getElementById("logwrap");
+const empty = document.getElementById("empty");
+const input = document.getElementById("input");
+const sendBtn = document.getElementById("send");
+const modelSel = document.getElementById("model");
+const dot = document.getElementById("dot");
+const hint = document.getElementById("hint");
+let messages = [];
+let busy = false;
+async function loadModels() {
+  try {
+    const r = await fetch(API + "/api/tags");
+    const data = await r.json();
+    const names = (data.models || []).map(m => m.name).sort();
+    if (!names.length) throw new Error("no models");
+    modelSel.innerHTML = "";
+    for (const n of names) {
+      const o = document.createElement("option");
+      o.value = n; o.textContent = n; modelSel.appendChild(o);
+    }
+    const preferred = names.find(n => /coder.*8k/i.test(n)) || names.find(n => /coder/i.test(n)) || names[0];
+    modelSel.value = preferred;
+  } catch (e) {
+    dot.style.background = "#e74c3c"; dot.style.boxShadow = "0 0 8px #e74c3c";
+    hint.textContent = "Can't reach Ollama at localhost:11434 - is it running? (try: ollama list)";
+  }
+}
+function escapeHtml(s) {
+  return s.replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+}
+function render(text) {
+  const parts = text.split(/(```[\s\S]*?```)/g);
+  return parts.map(p => {
+    if (p.startsWith("```")) {
+      const body = p.replace(/^```[^\n]*\n?/, "").replace(/```$/, "");
+      return "<pre><code>" + escapeHtml(body) + "</code></pre>";
+    }
+    let h = escapeHtml(p);
+    h = h.replace(/&lt;think&gt;([\s\S]*?)&lt;\/think&gt;/g, '<div class="think">$1</div>');
+    h = h.replace(/`([^`]+)`/g, "<code>$1</code>");
+    h = h.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+    return h;
+  }).join("");
+}
+function addMsg(role, text) {
+  empty.style.display = "none";
+  const el = document.createElement("div");
+  el.className = "msg " + (role === "user" ? "user" : "bot");
+  el.innerHTML = '<div class="who">' + (role === "user" ? "You" : "AI") + '</div><div class="body"></div>';
+  const body = el.querySelector(".body");
+  body.innerHTML = render(text);
+  logwrap.appendChild(el);
+  scrollDown();
+  return body;
+}
+function scrollDown() { const l = document.getElementById("log"); l.scrollTop = l.scrollHeight; }
+async function send() {
+  const text = input.value.trim();
+  if (!text || busy) return;
+  busy = true; sendBtn.disabled = true;
+  input.value = ""; input.style.height = "auto";
+  addMsg("user", text);
+  messages.push({ role: "user", content: text });
+  const body = addMsg("assistant", "");
+  let acc = "";
+  try {
+    const resp = await fetch(API + "/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: modelSel.value, messages, stream: true })
+    });
+    const reader = resp.body.getReader();
+    const dec = new TextDecoder();
+    let buf = "";
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      const lines = buf.split("\n"); buf = lines.pop();
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        const obj = JSON.parse(line);
+        if (obj.message && obj.message.content) {
+          acc += obj.message.content;
+          body.innerHTML = render(acc);
+          scrollDown();
+        }
+      }
+    }
+    messages.push({ role: "assistant", content: acc });
+  } catch (e) {
+    body.innerHTML = render("Error talking to the model: " + e.message);
+  } finally {
+    busy = false; sendBtn.disabled = false; input.focus();
+  }
+}
+sendBtn.addEventListener("click", send);
+input.addEventListener("keydown", e => {
+  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
+});
+input.addEventListener("input", () => {
+  input.style.height = "auto"; input.style.height = Math.min(input.scrollHeight, 180) + "px";
+});
+loadModels();
+input.focus();
+</script>
+</body>
+</html>
+CHATHTML
+}
+
+# Open a local browser chat. Serves the page from 127.0.0.1 via python3 (present
+# on ~every mac/linux); falls back to the terminal if python3 is missing.
+start_chat() {
+  step "Opening a local chat in your browser"
+  curl -fsS http://localhost:11434/api/tags >/dev/null 2>&1 || \
+    warn "Ollama doesn't look like it's running yet — run setup first (the chat page will say so too)."
+  if $DRY_RUN; then say "${DIM}[dry-run] write chat page, serve on 127.0.0.1:${CHAT_PORT}, open browser${RESET}"; return 0; fi
+  if ! command -v python3 >/dev/null 2>&1; then
+    warn "python3 isn't installed, so I can't auto-serve the chat page."
+    say "  Chat in the terminal instead:  ${DIM}ollama run <a model from 'ollama list'>${RESET}"
+    return 0
+  fi
+  mkdir -p "$CHAT_DIR"; write_chat_html "$CHAT_DIR/index.html"
+  if ! curl -fsS "http://127.0.0.1:${CHAT_PORT}/" >/dev/null 2>&1; then
+    nohup python3 -m http.server "$CHAT_PORT" --bind 127.0.0.1 --directory "$CHAT_DIR" >/dev/null 2>&1 &
+    disown 2>/dev/null || true
+    for _ in 1 2 3 4 5 6; do curl -fsS "http://127.0.0.1:${CHAT_PORT}/" >/dev/null 2>&1 && break; sleep 0.5; done
+  fi
+  if curl -fsS "http://127.0.0.1:${CHAT_PORT}/" >/dev/null 2>&1; then
+    open_url "http://localhost:${CHAT_PORT}/"
+    ok "Chat is live at ${BOLD}http://localhost:${CHAT_PORT}${RESET}  ${DIM}(opened in your browser)${RESET}"
+    say "  ${DIM}Stop it:  lsof -ti:${CHAT_PORT} | xargs kill     ·     Re-open:  ./local-llm-setup.sh --chat${RESET}"
+  else
+    warn "Couldn't start the chat server on port ${CHAT_PORT}."
+    say "  Chat in the terminal instead:  ${DIM}ollama run <a model from 'ollama list'>${RESET}"
+  fi
+  return 0
+}
+
+# Pick the best installed coder / reasoning models for the editor config.
+EDITOR_CODER=""
+EDITOR_REASONER=""
+pick_editor_models() {
+  EDITOR_CODER="$(installed_models | grep -i coder | grep -- '-8k$' | head -1 || true)"
+  [[ -z "$EDITOR_CODER" ]] && EDITOR_CODER="$(installed_models | grep -i coder | grep -v lean | head -1 || true)"
+  EDITOR_REASONER="$(installed_models | grep -iE 'deepseek|-r1' | grep -- '-8k$' | head -1 || true)"
+  [[ -z "$EDITOR_REASONER" ]] && EDITOR_REASONER="$(installed_models | grep -iE 'deepseek|-r1' | head -1 || true)"
+  return 0   # the trailing [[ ]] above can be false; don't let that fail the function under `set -e`
+}
+
+# Write ~/.continue/config.yaml pointed at the local models (chat + edit + apply).
+write_continue_config() {
+  mkdir -p "$HOME/.continue"
+  { echo "name: Local (Ollama) Assistant"
+    echo "version: 0.0.1"
+    echo "schema: v1"
+    echo "models:"
+    echo "  - name: Coder (local)"
+    echo "    provider: ollama"
+    echo "    model: ${EDITOR_CODER}"
+    echo "    roles: [chat, edit, apply]"
+    if [[ -n "$EDITOR_REASONER" ]]; then
+      echo "  - name: Reasoner (local)"
+      echo "    provider: ollama"
+      echo "    model: ${EDITOR_REASONER}"
+      echo "    roles: [chat]"
+    fi
+  } > "$HOME/.continue/config.yaml"
+}
+
+# Set up Continue in VS Code / Cursor, pointed at the local models.
+setup_editor() {
+  step "Setting up your editor (Continue, pointed at your local models)"
+  local cli=""
+  command -v code >/dev/null 2>&1 && cli="code"
+  [[ -z "$cli" ]] && command -v cursor >/dev/null 2>&1 && cli="cursor"
+  if [[ -z "$cli" ]]; then
+    warn "No VS Code / Cursor command ('code') found."
+    say "  Install VS Code (${DIM}https://code.visualstudio.com${RESET}), then re-run:  ${DIM}./local-llm-setup.sh --editor${RESET}"
+    say "  Or point any editor at the local API:  ${DIM}Base URL http://localhost:11434/v1${RESET}"
+    return 0
+  fi
+  pick_editor_models
+  if [[ -z "$EDITOR_CODER" ]]; then
+    warn "No coder model is installed yet — run setup first, then ./local-llm-setup.sh --editor."
+    return 0
+  fi
+  if $DRY_RUN; then
+    say "${DIM}[dry-run] $cli --install-extension Continue.continue${RESET}"
+    say "${DIM}[dry-run] write ~/.continue/config.yaml -> ${EDITOR_CODER}${EDITOR_REASONER:+, ${EDITOR_REASONER}}${RESET}"
+    return 0
+  fi
+  if $cli --install-extension Continue.continue >/dev/null 2>&1; then
+    ok "Installed the Continue extension in ${cli}"
+  else
+    warn "Couldn't install Continue automatically — add it from your editor's Extensions panel."
+  fi
+  write_continue_config
+  ok "Wrote ~/.continue/config.yaml — ${BOLD}${EDITOR_CODER}${RESET} is ready in Continue."
+  say "  ${DIM}Open your editor -> Continue icon in the sidebar -> pick a '(local)' model.${RESET}"
+}
+
 case "$MODE" in
   benchmark) do_benchmark; exit 0 ;;
   uninstall) do_uninstall; exit 0 ;;
+  chat)      start_chat;   exit 0 ;;
+  editor)    setup_editor; exit 0 ;;
 esac
 
 # ----------------------------------------------------------------------------
@@ -547,6 +855,12 @@ fi
 step "You're set up. Here's how to use it:"
 cat <<EOF
 
+  ${BOLD}Chat in your browser${RESET} (nice UI, nothing extra to install):
+    ./local-llm-setup.sh --chat
+
+  ${BOLD}AI inside your editor${RESET} (Continue in VS Code / Cursor):
+    ./local-llm-setup.sh --editor
+
   ${BOLD}Chat in the terminal:${RESET}
     ollama run ${CHAT_MODEL}
 
@@ -579,12 +893,10 @@ if $LEAN && ! $DRY_RUN; then
   done
 fi
 
-# Offer to jump straight into a chat — the most intuitive way to start exploring.
+# Offer the chat + editor right now — the fastest path from "installed" to "using it".
 # Only when interactive (a real terminal, not --yes / not piped / not a dry-run).
 if ! $ASSUME_YES && ! $DRY_RUN && [[ -t 0 && -t 1 ]]; then
-  if ask "Start chatting with ${CHAT_MODEL} now? (type /bye to leave)" y; then
-    say ""
-    ollama run "$CHAT_MODEL"
-  fi
+  ask "Open a chat in your browser now?" y && start_chat || true
+  ask "Set up your editor (Continue in VS Code / Cursor) for these models?" y && setup_editor || true
 fi
 ok "Done."

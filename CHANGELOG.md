@@ -4,6 +4,29 @@ All notable changes to this project are documented here. Format based on
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/); this project aims to
 follow [Semantic Versioning](https://semver.org/).
 
+## [1.3.0] — 2026-06-14
+
+The "zero to *useful* in one command" release. After the model is running, the
+script can now open a **chat in your browser** and wire up your **editor** — no
+Docker, no extra runtime, on every OS.
+
+### Added
+- **`--chat` / `-Chat`** — generate a self-contained chat page and open it in your
+  browser, served from `localhost` (which Ollama allows by default, so there's no
+  Docker, no extra install, and Ollama is **not** exposed to the wider web). A
+  ChatGPT-style UI: model picker, streaming replies, code blocks. Mac/Linux serve
+  it via `python3`; Windows serves it via Python if present, otherwise points you
+  at the native Ollama app. Run it standalone anytime or accept the prompt after setup.
+- **`--editor` / `-Editor`** — install the **Continue** extension in VS Code / Cursor
+  and write `~/.continue/config.yaml` pointed at your local context-tuned models
+  (chat + edit + apply), so AI coding inside your editor works immediately.
+- Both are offered interactively at the end of setup ("Open a chat now? Set up your
+  editor?") and listed in the post-setup tips.
+
+### Changed
+- The post-setup prompt now leads with the **browser chat + editor** instead of the
+  bare terminal REPL (the `ollama run` path is still documented).
+
 ## [1.2.0] — 2026-06-14
 
 ### Added
@@ -118,6 +141,7 @@ First public release.
 - Full community profile: README, MIT license, CONTRIBUTING, CODE_OF_CONDUCT,
   SECURITY, issue + PR templates.
 
+[1.3.0]: https://github.com/hamza-ali-shahjahan/local-llm-setup/releases/tag/v1.3.0
 [1.2.0]: https://github.com/hamza-ali-shahjahan/local-llm-setup/releases/tag/v1.2.0
 [1.1.1]: https://github.com/hamza-ali-shahjahan/local-llm-setup/releases/tag/v1.1.1
 [1.1.0]: https://github.com/hamza-ali-shahjahan/local-llm-setup/releases/tag/v1.1.0

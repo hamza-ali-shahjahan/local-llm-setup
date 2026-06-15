@@ -4,7 +4,7 @@
 
 Setting up a local AI model the normal way takes **a dozen manual steps and a pile of decisions**: which runtime, which model, will it fit your RAM, what "quantization" means, how to set a context window, how to test it. Miss one and you're stuck.
 
-This collapses all of it into **one command that asks you nothing it can figure out for itself** — and you don't need to know what any of it means. It checks you have the disk space before downloading, sizes the model to your GPU when you have one, and offers to drop you straight into a chat the moment it's done.
+This collapses all of it into **one command that asks you nothing it can figure out for itself** — and you don't need to know what any of it means. It checks you have the disk space before downloading, sizes the model to your GPU when you have one, and — the moment it's done — offers to open a chat in your browser and set up AI in your editor.
 
 [![ShellCheck](https://github.com/hamza-ali-shahjahan/local-llm-setup/actions/workflows/shellcheck.yml/badge.svg)](https://github.com/hamza-ali-shahjahan/local-llm-setup/actions/workflows/shellcheck.yml)
 [![Linux smoke test](https://github.com/hamza-ali-shahjahan/local-llm-setup/actions/workflows/linux-smoke.yml/badge.svg)](https://github.com/hamza-ali-shahjahan/local-llm-setup/actions/workflows/linux-smoke.yml)
@@ -58,7 +58,7 @@ Cloud AI tools can change their rules overnight. Running a capable model on your
   Download: ~19 GB  (you have 669 GB free)
 ```
 
-It then checks you have the disk space, installs Ollama, pulls those models, bakes the context window into ready-to-use `*-8k` variants, runs a live smoke test, and offers to drop you into a chat. On a Linux or Windows box with an NVIDIA GPU you'll also see a `✓ GPU:` line, and the tier is sized to your VRAM instead.
+It then checks you have the disk space, installs Ollama, pulls those models, bakes the context window into ready-to-use `*-8k` variants, runs a live smoke test, and offers to open a browser chat + set up your editor. On a Linux or Windows box with an NVIDIA GPU you'll also see a `✓ GPU:` line, and the tier is sized to your VRAM instead.
 
 ## Quickstart
 
@@ -188,6 +188,8 @@ macOS / Linux use `--flag`; Windows PowerShell uses `-Flag`. Same behavior eithe
 | `--yes`, `-y` | `-Yes` | Accept all defaults, no prompts (unattended) |
 | `--tier <t>` | `-Tier <t>` | Force a model tier (`7b`, `14b`, `32b`, `70b`) |
 | `--lean` | `-Lean` | Also bake a minimal-code "ponytail" coder variant (see below) |
+| `--chat` | `-Chat` | Open a local chat in your browser (no extra installs) |
+| `--editor` | `-Editor` | Set up Continue in VS Code / Cursor for your local models |
 | `--benchmark` | `-Benchmark` | Measure tokens/sec for every installed model |
 | `--uninstall` | `-Uninstall` | Remove the models this tool installs (asks first) |
 | `--platform <os>` | — | Override OS auto-detect (`mac`, `linux`) |
@@ -206,17 +208,35 @@ ollama run qwen2.5-coder-14b-lean     # the minimal-code coder
 
 The system prompt is adapted from [ponytail](https://github.com/DietrichGebert/ponytail) (MIT) — *"the best code is the code you never wrote."*
 
+## Use it: a chat window and your editor
+
+Running the model is only half of "useful". When setup finishes it **offers to do both of these for you** — or run them anytime:
+
+**💬 Chat in your browser** — a ChatGPT-style window, no Docker and nothing extra to install:
+
+```bash
+./local-llm-setup.sh --chat          # -Chat on Windows
+```
+
+It writes a self-contained chat page and serves it from `localhost` — which Ollama allows by default, so your model is reachable from the page but **not** exposed to the wider web. Model picker, streaming replies, code blocks.
+
+**🧩 AI inside your editor** — installs [Continue](https://continue.dev) in VS Code / Cursor and points it at your local models:
+
+```bash
+./local-llm-setup.sh --editor        # -Editor on Windows
+```
+
+Then open your editor → the Continue icon in the sidebar → pick a "(local)" model. Chat, edit, and "apply" all run on your machine.
+
 ## After setup
 
 ```bash
-ollama run qwen2.5-coder-14b-8k       # chat with your context-tuned model
+ollama run qwen2.5-coder-14b-8k       # chat with your context-tuned model in the terminal
 ollama list                           # see everything you have
 ./local-llm-setup.sh --benchmark      # how fast is each model? (tokens/sec)
 ```
 
-When it finishes, the script also **offers to start a chat for you** — so you can try it the second it's ready.
-
-Point any OpenAI-compatible app, IDE, or agent at it:
+Point any OpenAI-compatible app, IDE, or agent at it directly:
 
 - **Base URL:** `http://localhost:11434/v1`
 - **API key:** `ollama` (any non-empty string works)
