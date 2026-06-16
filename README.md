@@ -261,6 +261,8 @@ Running the model is only half of "useful". When setup finishes it **offers to s
 
 Ask it to *"build me a stopwatch"* and it renders + runs in a sandboxed iframe (with a **Code** tab + **Download**). It works with **any code-writing model** — a builder prompt makes the model emit one self-contained HTML file. Also: a **history sidebar** (past builds) and Claude-Code-style scroll (scroll up mid-generation without getting yanked down). Served from `localhost`, which Ollama allows by default, so the page can reach your model but Ollama is **not** exposed to the web.
 
+Under the hood it works like the tools that inspired it: it **picks the right model for each request** (⚡ Auto — a coder to build, a reasoner to explain), **plans before it builds**, **fixes its own runtime errors**, shows the work as **traceable tasks** (not raw code scrolling past), and keeps each chat as its own isolated project. With **agent mode** on it can also **clone a real website** — inspect its live palette, fonts and layout, rebuild it, then **score** how close the result is. See [how that compares to Claude Code and Lovable](#how-we-compare--and-where-were-honestly-behind) below.
+
 **🧩 AI inside your editor** — installs [Continue](https://continue.dev) in VS Code / Cursor and points it at your local models:
 
 ```bash
@@ -276,6 +278,46 @@ Then open your editor → the Continue icon in the sidebar → pick a "(local)" 
 ```
 
 Every action waits for you to click **Approve**, and everything happens inside a workspace folder (`~/.local-llm-setup/workspace`), on `localhost` only. It's **off by default and consented** because an approved command runs with your full permissions — see the safety notes in [CHANGELOG.md](CHANGELOG.md).
+
+## How we compare — and where we're honestly behind
+
+This project exists to bring **[Claude Code](https://www.anthropic.com/claude-code)**- and **[Lovable](https://lovable.dev)**-style building to a **100% local, free, private** stack. We are **not at parity yet** — and the honest thing is to show exactly where. **Every ❌ below is a public to-do, not a secret, and we're committed to closing them.**
+
+What you trade that gap *for*: it runs entirely on your machine, costs nothing, works offline, and your code never leaves the building.
+
+| Tool capability | **local-llm-setup** | Claude Code | Lovable |
+|---|:---:|:---:|:---:|
+| Build & edit code | ✅ | ✅ | ✅ |
+| Live preview | ✅ | ✅ | ✅ |
+| Plan before building | ✅ | ✅ | ✅ |
+| Run commands / terminal | ✅ | ✅ | ⚠️ |
+| Read / write files | ✅ | ✅ | ✅ |
+| Self-repair runtime errors | ✅ | ✅ | ✅ |
+| Self-correcting "owns its mistakes" voice | ✅ | ✅ | ⚠️ |
+| Fetch & inspect a web page | ✅ | ✅ | ✅ |
+| Extract a site's palette & fonts | ✅ | ✅ | ✅ |
+| **Clone a real website** | ✅ | ✅ | ✅ |
+| Auto-pick the model per request | ✅ ⚡ | ❌ | ❌ |
+| Screenshot a page | ⚠️ | ✅ | ✅ |
+| Visual / fidelity self-check | ⚠️ | ✅ | ✅ |
+| Web search | ❌ | ✅ | ⚠️ |
+| Image generation | ❌ | ⚠️ | ✅ |
+| Multi-file projects | ❌ | ✅ | ✅ |
+| Backend / database / auth | ❌ | ⚠️ | ✅ |
+| One-click deploy | ❌ | ✅ | ✅ |
+| Git / repo sync | ❌ | ✅ | ✅ |
+| **Runs 100% local & offline** | ✅ | ❌ | ❌ |
+| **Free — no subscription** | ✅ | ❌ | ❌ |
+| **Your code never leaves your machine** | ✅ | ❌ | ❌ |
+
+<sub>✅ have it · ⚠️ partial, best-effort, or a different approach · ❌ not yet — building toward it</sub>
+
+**Where we're behind, and committed to closing:** multi-file projects, web search, image generation, a backend/database, one-click deploy, and Git sync. Two honest caveats on the ⚠️s:
+
+- **Visual check is _structural_, not pixel-perfect.** We score a clone's palette, fonts and sections against the real page — local coder models aren't vision-capable yet, so we measure the design tokens rather than "looking" at the screenshot. It's the more *actionable* signal for a code model, but it isn't the same thing.
+- **Screenshots are best-effort** — we reuse an already-installed Chrome/Chromium (no extra dependency) and degrade gracefully if none is found.
+
+The roadmap toward parity lives in [`docs/PRD-local-builder-v2-tools-and-goals.md`](docs/PRD-local-builder-v2-tools-and-goals.md). **Issues and PRs that turn a ❌ into a ✅ are exactly what this project is for.**
 
 ## After setup
 
