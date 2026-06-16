@@ -303,5 +303,3 @@ Model tags age as new releases ship. PRs that bump the tier list are welcome —
 ## License
 
 [MIT](LICENSE) © Hamza Ali Shahjahan
-</content>
-</invoke>
