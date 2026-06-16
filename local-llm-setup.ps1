@@ -45,7 +45,7 @@ param(
   [switch]$Help
 )
 
-$AppVersion = '1.6.0'   # NB: not $Version — that name is the -Version switch param
+$AppVersion = '1.7.0'   # NB: not $Version — that name is the -Version switch param
 $Ctx = 8192             # default context window — big enough for real work, light on RAM
 $HomeDir = if ($env:USERPROFILE) { $env:USERPROFILE } else { $HOME }
 $ChatDir = Join-Path $HomeDir '.local-llm-setup\chat'   # where the chat page is written
@@ -586,6 +586,7 @@ const AGENT_SYSTEM =
   "<fetch url=\"https://...\">  — fetch a public web page's raw HTML\n" +
   "<inspect url=\"https://...\">  — a STRUCTURED digest of a page: title, sections, headings, links, images, the real colour palette and font families\n" +
   "<extract url=\"https://...\">  — just a page's design tokens (palette + fonts)\n" +
+  "<screenshot url=\"https://...\">  — render a page in a headless browser and capture a PNG (best-effort; needs Chrome/Chromium)\n" +
   "To CLONE or recreate a real website, FIRST <inspect url=\"...\"> to observe its real structure, palette and fonts — never invent them — then write the page to match those exact colours, fonts and sections. " +
   "Use the result to decide the next step. " +
   "Narrate like a careful engineer thinking out loud: before each tool call, say in ONE short line what you're about to do and why. " +
@@ -832,6 +833,16 @@ function buildTasks(lines, codeDone, previewDone) {
       label: previewDone ? "Rendered the preview" : (codeDone ? "Rendering the preview" : "Render the preview") }
   ]);
 }
+// A clone's structural-fidelity score vs the original page (palette/fonts/sections/copy).
+function fidelityCard(sc) {
+  const tone = sc.score >= 75 ? "#2ecc71" : sc.score >= 50 ? "#e8b84b" : "#ff7a7a";
+  let h = '<div class="tasks" style="margin-top:9px"><div class="tk"><span class="tki" style="border:0;color:' + tone + '">&#9678;</span>'
+    + '<span><b>Clone fidelity: <span style="color:' + tone + '">' + sc.score + '%</span></b> '
+    + '<span class="meta">palette ' + sc.palette_match + '% · fonts ' + sc.font_match + '% · sections ' + sc.section_coverage + '% · copy ' + sc.heading_match + '%</span></span></div>';
+  if (sc.missing_colors && sc.missing_colors.length)
+    h += '<div class="tk tk-queued"><span class="tki"></span><span class="meta">unused original colours: ' + sc.missing_colors.join(", ") + '</span></div>';
+  return h + "</div>";
+}
 // Throttle streaming re-renders to ~1/66ms so the bubble doesn't reflow on every
 // token — that thrash is what made scrolling up jerk. The post-stream final paint
 // always runs, so nothing is lost by skipping intermediate frames.
@@ -1042,7 +1053,7 @@ el("newBtn").addEventListener("click", newChat);
 el("sbToggle").addEventListener("click", () => sidebar.classList.toggle("collapsed"));
 
 /* ---------- agent tools ---------- */
-const READONLY_TOOLS = ["read", "fetch", "inspect", "extract"];
+const READONLY_TOOLS = ["read", "fetch", "inspect", "extract", "screenshot"];
 function findToolCall(text) {
   const run = text.match(/<run>([\s\S]*?)<\/run>/i);
   if (run) return { kind: "run", cmd: run[1].trim() };
@@ -1056,6 +1067,8 @@ function findToolCall(text) {
   if (ins) return { kind: "inspect", url: ins[1].trim() };
   const ex = text.match(/<extract\s+url="([^"]+)"\s*\/?>/i);
   if (ex) return { kind: "extract", url: ex[1].trim() };
+  const sh = text.match(/<screenshot\s+url="([^"]+)"\s*\/?>/i);
+  if (sh) return { kind: "screenshot", url: sh[1].trim() };
   return null;
 }
 function approvalCard(tool) {
@@ -1100,7 +1113,11 @@ async function runTool(tool) {
     let out;
     if (tool.kind === "read") out = j.content || "(empty)";
     else if (tool.kind === "fetch") out = "Fetched " + j.url + " — status " + j.status + (j.truncated ? " (truncated)" : "") + "\n\n" + j.html;
-    else { delete j.ok; out = JSON.stringify(j, null, 1); }   // inspect / extract -> the structured digest
+    else if (tool.kind === "screenshot") {
+      if (j.dataurl) { termview.classList.remove("hidden"); termview.insertAdjacentHTML("beforeend", '<img src="' + j.dataurl + '" style="max-width:100%;border:1px solid #1e2430;border-radius:8px;margin:4px 0">'); termview.scrollTop = termview.scrollHeight; }
+      out = "screenshot saved to workspace/" + (j.path || "shots") + " (" + (j.bytes || 0) + " bytes)";   // model can't see images; gets the path
+    }
+    else { delete j.ok; delete j.dataurl; out = JSON.stringify(j, null, 1); }   // inspect / extract / score -> the structured digest
     term(escapeHtml(out.slice(0, 1400)) + (out.length > 1400 ? "\n  …(" + out.length + " chars)" : "") + "\n\n");
     return out.slice(0, 6000);
   }
@@ -1264,6 +1281,13 @@ async function send() {
             body.innerHTML = planPrefix() + repairHtml + prose + buildTasks(curLines, true, true);
             scrollDown();
           }
+          // clone: score the rebuild against the real page (structural fidelity)
+          if (r.cloneUrl) {
+            try {
+              const sc = await (await fetch(AGENT_URL + "/api/agent/score", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ a: { url: r.cloneUrl }, b: { html: sessionApp } }), signal: abortCtl.signal })).json();
+              if (sc.ok) { body.innerHTML = planPrefix() + repairHtml + prose + buildTasks(curLines, true, true) + fidelityCard(sc); scrollDown(); }
+            } catch (e) { if (e.name === "AbortError") throw e; }
+          }
         }
       } else {
         body.innerHTML = streamPrefix() + render(acc);              // answered without an app
@@ -1311,30 +1335,33 @@ function Write-AgentServer {
 #   GET  /api/agent/ping              -> {ok:true}
 #   POST /api/agent/run   {cmd}       -> run a shell command IN the workspace dir   (mutating -> approved in UI)
 #   POST /api/agent/write {path,content} -> write a file UNDER the workspace dir    (mutating -> approved in UI)
-#   POST /api/agent/read  {path}      -> read a file UNDER the workspace dir         (read-only)
-#   POST /api/agent/fetch {url}       -> fetch a public web page (raw HTML, capped)  (read-only, network)
-#   POST /api/agent/inspect {url}     -> structured digest of a page: title, sections,
-#                                        headings, links, images, palette, fonts     (read-only, network)
-#   POST /api/agent/extract {url}     -> just the design tokens: palette + fonts      (read-only, network)
+#   POST /api/agent/read  {path}      -> read a file UNDER the workspace dir          (read-only)
+#   POST /api/agent/fetch {url}       -> fetch a public web page (raw HTML, capped)   (read-only, network)
+#   POST /api/agent/inspect {url|html}-> structured digest: title, sections, headings,
+#                                        links, images, palette, fonts                (read-only)
+#   POST /api/agent/extract {url}     -> just the design tokens: palette + fonts       (read-only, network)
+#   POST /api/agent/score {a,b}       -> design-fidelity score between two pages       (read-only)
+#                                        (each of a/b is {url} or {html}) — palette/font/
+#                                        section/heading overlap -> 0-100 + deltas.
+#                                        NB: structural, not pixel — local models aren't vision.
+#   POST /api/agent/screenshot {url|html} -> render via an installed headless Chrome/   (read-only)
+#                                        Chromium -> PNG (graceful if no browser found)
 #
-# These read/inspect/extract tools are what let the builder CLONE a real site:
-# observe the page (structure + colours + fonts) instead of inventing it.
+# These read/inspect/extract/score tools are what let the builder CLONE a real site:
+# observe the page, rebuild it, then SCORE how close the rebuild is.
 #
 # Safety posture:
-#   - binds 127.0.0.1 only (never exposed off the machine)
-#   - CORS + Origin check: only this page's own origin may drive the tools
+#   - binds 127.0.0.1 only; CORS + Origin check (only this page's origin may drive tools)
 #   - file read/write confined to the workspace (path-escape rejected)
-#   - shell commands run with cwd = workspace and a 30s timeout
-#   - network fetch is SSRF-guarded: http/https only, public hosts only
-#     (loopback / private / link-local / reserved IPs rejected, incl. on redirect),
-#     15s timeout, 2 MB cap
-#   - the *page* asks you to Approve every MUTATING tool (run / write) before it runs;
-#     read-only tools (read / fetch / inspect / extract) run directly but are shown
+#   - shell commands run with cwd = workspace, 30s timeout
+#   - network fetch/screenshot are SSRF-guarded: http/https only, public hosts only
+#     (loopback / private / link-local / reserved rejected, incl. on redirect), 15s/2MB
+#   - the page approves every MUTATING tool (run / write); read-only tools run directly
 #
-# It does NOT sandbox an approved command itself (an approved `rm -rf ~` still runs) —
-# approval in the UI is the guardrail for mutations. Harden before any default ship.
+# An approved command itself is not sandboxed (an approved `rm -rf ~` still runs) —
+# UI approval is the guardrail for mutations. Harden before any default ship.
 
-import json, os, re, socket, ipaddress, subprocess, urllib.request
+import json, os, re, socket, ipaddress, subprocess, base64, shutil, tempfile, urllib.request
 from collections import Counter
 from html.parser import HTMLParser
 from urllib.parse import urljoin, urlsplit
@@ -1348,7 +1375,7 @@ os.makedirs(WORKSPACE, exist_ok=True)
 ORIGINS = {f"http://localhost:{PORT}", f"http://127.0.0.1:{PORT}"}
 
 UA = "Mozilla/5.0 (LocalLLMBuilder; +http://localhost) AppleWebKit/537.36"
-FETCH_CAP = 2_000_000          # max bytes pulled from a page
+FETCH_CAP = 2_000_000
 FETCH_TIMEOUT = 15
 
 def safe_path(rel):
@@ -1359,7 +1386,6 @@ def safe_path(rel):
 
 # ---------- network: SSRF-guarded fetch ----------
 def _assert_public(host):
-    """Reject hosts that resolve to anything but a public address (SSRF guard)."""
     if not host:
         raise ValueError("no host")
     for info in socket.getaddrinfo(host, None):
@@ -1387,8 +1413,7 @@ def fetch(url):
     with _OPENER.open(req, timeout=FETCH_TIMEOUT) as r:
         raw = r.read(FETCH_CAP + 1)
         final, status = r.geturl(), getattr(r, "status", 200)
-        ctype = r.headers.get("Content-Type", "")
-    return {"final_url": final, "status": status, "ctype": ctype,
+    return {"final_url": final, "status": status,
             "html": raw[:FETCH_CAP].decode("utf-8", "replace"), "truncated": len(raw) > FETCH_CAP}
 
 # ---------- html digest (stdlib only) ----------
@@ -1439,8 +1464,7 @@ class _Digest(HTMLParser):
         if self._in_style: self.styles.append(data)
 
 def _palette(style_text):
-    c = Counter(m.lower() for m in _COLOR_RE.findall(style_text))
-    return [col for col, _ in c.most_common(16)]
+    return [c for c, _ in Counter(m.lower() for m in _COLOR_RE.findall(style_text)).most_common(16)]
 
 def _fonts(style_text, font_links):
     out = []
@@ -1453,23 +1477,96 @@ def _fonts(style_text, font_links):
             if fam and fam.lower() not in (x.lower() for x in out): out.append(fam)
     return out[:8]
 
-def digest(url):
-    f = fetch(url)
-    d = _Digest(f["final_url"])
-    try: d.feed(f["html"])
+def _digest_html(html, base=""):
+    d = _Digest(base)
+    try: d.feed(html)
     except Exception: pass
     style_text = "\n".join(d.styles)
     return {
-        "url": f["final_url"], "status": f["status"], "truncated": f["truncated"],
+        "url": base,
         "title": d.title.strip()[:200], "description": (d.desc or "")[:300],
-        "headings": d.headings[:30],
-        "sections": d.sections[:30],
-        "nav_links": d.links[:30],
-        "images": d.images[:24],
-        "palette": _palette(style_text),
-        "fonts": _fonts(style_text, d.font_links),
+        "headings": d.headings[:30], "sections": d.sections[:30],
+        "nav_links": d.links[:30], "images": d.images[:24],
+        "palette": _palette(style_text), "fonts": _fonts(style_text, d.font_links),
         "counts": {"links": len(d.links), "images": len(d.images), "sections": len(d.sections)},
     }
+
+def digest(url):
+    f = fetch(url)
+    out = _digest_html(f["html"], f["final_url"])
+    out.update({"status": f["status"], "truncated": f["truncated"]})
+    return out
+
+def target_digest(obj):
+    if not obj: raise ValueError("missing target (need {url} or {html})")
+    if obj.get("html") is not None: return _digest_html(obj["html"], obj.get("base", ""))
+    return digest((obj.get("url") or "").strip())
+
+# ---------- fidelity score (structural; not pixels — local models aren't vision) ----------
+def _norm(xs): return set(x.lower().strip() for x in xs if x and x.strip())
+
+def fidelity(a, b):
+    pa, pb = _norm(a["palette"]), _norm(b["palette"])
+    fa, fb = _norm(a["fonts"]), _norm(b["fonts"])
+    ha, hb = _norm(h["text"] for h in a["headings"]), _norm(h["text"] for h in b["headings"])
+    pal = len(pa & pb) / len(pa) if pa else (1.0 if not pb else 0.0)
+    fon = len(fa & fb) / len(fa) if fa else 1.0
+    secA, secB = len(a["sections"]), len(b["sections"])
+    sec = min(secB, secA) / secA if secA else 1.0
+    head = len(ha & hb) / len(ha) if ha else 1.0
+    score = round(100 * (0.35 * pal + 0.25 * fon + 0.20 * sec + 0.20 * head))
+    return {
+        "score": score,
+        "palette_match": round(pal * 100), "font_match": round(fon * 100),
+        "section_coverage": round(sec * 100), "heading_match": round(head * 100),
+        "missing_colors": [c for c in a["palette"] if c.lower() not in pb][:8],
+        "missing_fonts": [f for f in a["fonts"] if f.lower() not in fb][:5],
+        "sections_original": secA, "sections_clone": secB,
+    }
+
+# ---------- screenshot via an installed headless browser (graceful) ----------
+def find_browser():
+    for c in ("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+              "/Applications/Chromium.app/Contents/MacOS/Chromium",
+              "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+              "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser"):
+        if os.path.exists(c): return c
+    for name in ("google-chrome", "google-chrome-stable", "chromium", "chromium-browser",
+                 "chrome", "microsoft-edge", "brave-browser"):
+        p = shutil.which(name)
+        if p: return p
+    return None
+
+def screenshot(url=None, html=None, width=1280, height=1600, name="shot"):
+    browser = find_browser()
+    if not browser:
+        raise ValueError("no headless browser found — install Google Chrome or Chromium to enable screenshots")
+    shots = os.path.join(WORKSPACE, "shots"); os.makedirs(shots, exist_ok=True)
+    out = os.path.join(shots, (re.sub(r'[^A-Za-z0-9_.-]', '_', name)[:40] or "shot") + ".png")
+    prof = tempfile.mkdtemp(prefix="llmshot_")
+    try:
+        if html is not None:
+            src = os.path.join(prof, "page.html")
+            with open(src, "w") as f: f.write(html)
+            target = "file://" + src
+        else:
+            p = urlsplit(url or "")
+            if p.scheme not in ("http", "https"): raise ValueError("only http/https URLs")
+            _assert_public(p.hostname); target = url
+        # --virtual-time-budget makes headless render then EXIT (otherwise it can hang on
+        # network-idle); the no-first-run/extension flags keep cold starts fast.
+        subprocess.run([browser, "--headless=new", "--disable-gpu", "--no-sandbox", "--hide-scrollbars",
+                        "--no-first-run", "--no-default-browser-check", "--disable-extensions",
+                        "--disable-background-networking", "--virtual-time-budget=5000",
+                        "--user-data-dir=" + prof, f"--window-size={width},{height}",
+                        f"--screenshot={out}", target], capture_output=True, timeout=25)
+    finally:
+        shutil.rmtree(prof, ignore_errors=True)
+    if not os.path.exists(out):
+        raise ValueError("the browser produced no image (it may be too old for --headless=new)")
+    data = open(out, "rb").read()
+    return {"path": os.path.relpath(out, WORKSPACE), "bytes": len(data),
+            "dataurl": "data:image/png;base64," + base64.b64encode(data).decode()}
 
 class H(BaseHTTPRequestHandler):
     def _cors(self):
@@ -1492,7 +1589,8 @@ class H(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path.startswith("/api/agent/ping"):
             return self._json(200, {"ok": True, "workspace": WORKSPACE,
-                                    "tools": ["run", "write", "read", "fetch", "inspect", "extract"]})
+                                    "tools": ["run", "write", "read", "fetch", "inspect", "extract", "score", "screenshot"],
+                                    "browser": bool(find_browser())})
         name = "index.html" if self.path in ("/", "") else os.path.basename(self.path.split("?")[0])
         fp = os.path.join(CHAT_DIR, name)
         if os.path.isfile(fp):
@@ -1537,13 +1635,14 @@ class H(BaseHTTPRequestHandler):
         if path.startswith("/api/agent/fetch"):
             try:
                 f = fetch((req.get("url") or "").strip())
-                # raw HTML is token-heavy; hand back a capped slice for the model
                 return self._json(200, {"ok": True, "url": f["final_url"], "status": f["status"],
                                         "html": f["html"][:12000], "truncated": f["truncated"] or len(f["html"]) > 12000})
             except Exception as e:
                 return self._json(200, {"ok": False, "error": str(e)})
         if path.startswith("/api/agent/inspect"):
             try:
+                if req.get("html") is not None:
+                    return self._json(200, {"ok": True, **_digest_html(req["html"], req.get("base", ""))})
                 return self._json(200, {"ok": True, **digest((req.get("url") or "").strip())})
             except Exception as e:
                 return self._json(200, {"ok": False, "error": str(e)})
@@ -1555,12 +1654,26 @@ class H(BaseHTTPRequestHandler):
                                         "sections": [s["tag"] for s in d["sections"]][:20]})
             except Exception as e:
                 return self._json(200, {"ok": False, "error": str(e)})
+        if path.startswith("/api/agent/score"):
+            try:
+                a, b = target_digest(req.get("a")), target_digest(req.get("b"))
+                return self._json(200, {"ok": True, "a_url": a.get("url", ""), "b_url": b.get("url", ""), **fidelity(a, b)})
+            except Exception as e:
+                return self._json(200, {"ok": False, "error": str(e)})
+        if path.startswith("/api/agent/screenshot"):
+            try:
+                return self._json(200, {"ok": True, **screenshot(url=req.get("url"), html=req.get("html"),
+                                                                  width=int(req.get("width", 1280)), height=int(req.get("height", 1600)),
+                                                                  name=req.get("name", "shot"))})
+            except Exception as e:
+                return self._json(200, {"ok": False, "error": str(e)})
         return self._json(404, {"error": "unknown endpoint"})
     def log_message(self, *a): pass
 
 if __name__ == "__main__":
     print(f"Local LLM agent server -> http://{HOST}:{PORT}   (workspace: {WORKSPACE})")
-    print("  tools: run, write, read, fetch, inspect, extract")
+    print("  tools: run, write, read, fetch, inspect, extract, score, screenshot"
+          + ("  [headless browser: found]" if find_browser() else "  [no headless browser -> screenshots disabled]"))
     ThreadingHTTPServer((HOST, PORT), H).serve_forever()
 '@
   Set-Content -LiteralPath $path -Value $py -Encoding utf8
