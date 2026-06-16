@@ -4,7 +4,30 @@ All notable changes to this project are documented here. Format based on
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/); this project aims to
 follow [Semantic Versioning](https://semver.org/).
 
-## [1.6.0] — 2026-06-17
+## [1.7.0] — 2026-06-17
+
+The builder can now **check its own work**: a clone is scored against the real page,
+so "is this a good clone?" becomes a number with named gaps — the foundation for a
+goal-driven, iterate-to-target loop.
+
+### Added
+- **Clone fidelity score** (`<score>` / shown automatically after a clone). Compares the
+  rebuild to the original page on **palette, fonts, section coverage and copy** → a 0–100
+  score plus the actionable deltas (e.g. *"unused original colours: #eee, #348"*). It is a
+  **structural** diff, not pixel/perceptual — local coder/reasoner models aren't vision-
+  capable, so the harness measures the design tokens instead of "looking" at the image.
+- **Screenshot** (`<screenshot url>`). Renders a page via an **already-installed** headless
+  Chrome/Chromium and captures a PNG — **no new dependency**; if no browser is found it
+  degrades gracefully (screenshots simply unavailable). Shown inline in the Terminal pane.
+- `inspect` now also accepts raw `{html}` (not just a URL), so a built page can be digested
+  and scored without a round-trip.
+
+### Changed
+- `ping` reports the available tools and whether a headless browser was found.
+
+### Notes
+- Screenshot is **best-effort**: verified to find Chrome, but headless capture depends on the
+  local browser/OS and was not exercised on every platform.
 
 Gives the local agent **real tools** — so it can *observe the world and check its
 work*, the way Claude Code and Lovable do — and a voice that **owns its mistakes**.
