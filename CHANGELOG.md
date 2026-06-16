@@ -4,6 +4,24 @@ All notable changes to this project are documented here. Format based on
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/); this project aims to
 follow [Semantic Versioning](https://semver.org/).
 
+## [1.8.0] — 2026-06-17
+
+The clone now **improves itself toward a target**. After a clone, the builder scores
+it, and if it's below the bar it feeds the exact gaps back to the coder, rebuilds, and
+re-scores — so you watch the fidelity number climb instead of hand-holding each fix.
+
+### Added
+- **Iterate-to-target clone loop.** After the first clone + fidelity score, if it's under
+  the target (75%) the builder automatically: lists the missing colours/fonts/sections →
+  asks the coder to close exactly those gaps → rebuilds → re-scores. Bounded to a couple of
+  rounds, and it stops early once it hits the target **or** a round stops improving. The
+  chat shows the climb live — e.g. *"Refined the clone (round 1) · 40% → 75%"* and a
+  *"Clone fidelity: 75% (↑ from 40%)"* card. Verified live end-to-end.
+
+This is step one of the goal-driven loop in
+[`docs/PRD-local-builder-v2-tools-and-goals.md`](docs/PRD-local-builder-v2-tools-and-goals.md);
+an explicit `/goal` command + a write-a-goal skill are the planned next step.
+
 ## [1.7.0] — 2026-06-17
 
 The builder can now **check its own work**: a clone is scored against the real page,

@@ -29,7 +29,7 @@
 #   ./local-llm-setup.sh --help
 #
 set -euo pipefail
-VERSION="1.7.0"
+VERSION="1.8.0"
 
 # ----------------------------------------------------------------------------
 # Pretty output (degrades gracefully if the terminal has no color)
@@ -867,14 +867,31 @@ function buildTasks(lines, codeDone, previewDone) {
   ]);
 }
 // A clone's structural-fidelity score vs the original page (palette/fonts/sections/copy).
-function fidelityCard(sc) {
+function fidelityCard(sc, from) {
   const tone = sc.score >= 75 ? "#2ecc71" : sc.score >= 50 ? "#e8b84b" : "#ff7a7a";
+  const trail = (from != null && from !== sc.score) ? ' <span class="meta">(&#8593; from ' + from + '%)</span>' : '';
   let h = '<div class="tasks" style="margin-top:9px"><div class="tk"><span class="tki" style="border:0;color:' + tone + '">&#9678;</span>'
-    + '<span><b>Clone fidelity: <span style="color:' + tone + '">' + sc.score + '%</span></b> '
+    + '<span><b>Clone fidelity: <span style="color:' + tone + '">' + sc.score + '%</span></b>' + trail + ' '
     + '<span class="meta">palette ' + sc.palette_match + '% · fonts ' + sc.font_match + '% · sections ' + sc.section_coverage + '% · copy ' + sc.heading_match + '%</span></span></div>';
   if (sc.missing_colors && sc.missing_colors.length)
     h += '<div class="tk tk-queued"><span class="tki"></span><span class="meta">unused original colours: ' + sc.missing_colors.join(", ") + '</span></div>';
   return h + "</div>";
+}
+// Score a clone (raw HTML) against the original URL; null on failure.
+async function scoreClone(url, html) {
+  try {
+    const j = await (await fetch(AGENT_URL + "/api/agent/score", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ a: { url }, b: { html } }), signal: abortCtl.signal })).json();
+    return j.ok ? j : null;
+  } catch (e) { if (e.name === "AbortError") throw e; return null; }
+}
+// Turn the fidelity gaps into a concrete "close these" instruction for the coder.
+function improvePrompt(sc) {
+  const L = ["Your clone scored only " + sc.score + "% fidelity against the original page. Raise it by closing these specific gaps:"];
+  if (sc.missing_colors && sc.missing_colors.length) L.push("- Use these EXACT colours from the original that you haven't used yet: " + sc.missing_colors.join(", ") + " — apply them to backgrounds, text, buttons and accents where they fit.");
+  if (sc.missing_fonts && sc.missing_fonts.length) L.push("- Use these fonts from the original (load from Google Fonts if needed): " + sc.missing_fonts.join(", ") + ".");
+  if (sc.sections_clone < sc.sections_original) L.push("- The original has ~" + sc.sections_original + " main sections; yours has " + sc.sections_clone + " — add the missing structural sections (nav, hero, features, footer, etc.).");
+  L.push("Output the COMPLETE updated HTML file in ONE ```html block. Keep everything that already works; only close these gaps.");
+  return L.join("\n");
 }
 // Throttle streaming re-renders to ~1/66ms so the bubble doesn't reflow on every
 // token — that thrash is what made scrolling up jerk. The post-stream final paint
@@ -1314,11 +1331,40 @@ async function send() {
             body.innerHTML = planPrefix() + repairHtml + prose + buildTasks(curLines, true, true);
             scrollDown();
           }
-          // clone: score the rebuild against the real page (structural fidelity)
+          // clone: score the rebuild, then ITERATE toward a fidelity target — feed the
+          // gaps back to the coder, rebuild, re-score; stop on target, no-gain, or cap.
           if (r.cloneUrl) {
             try {
-              const sc = await (await fetch(AGENT_URL + "/api/agent/score", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ a: { url: r.cloneUrl }, b: { html: sessionApp } }), signal: abortCtl.signal })).json();
-              if (sc.ok) { body.innerHTML = planPrefix() + repairHtml + prose + buildTasks(curLines, true, true) + fidelityCard(sc); scrollDown(); }
+              const TARGET = 75, MAX_ROUNDS = 2;
+              let sc = await scoreClone(r.cloneUrl, sessionApp);
+              const first = sc ? sc.score : null;
+              if (sc) { body.innerHTML = planPrefix() + repairHtml + prose + buildTasks(curLines, true, true) + fidelityCard(sc); scrollDown(); }
+              let round = 0;
+              while (sc && sc.score < TARGET && round < MAX_ROUNDS && sid === currentId) {
+                round++;
+                repairHtml = taskList([{ status: "active", label: "Refining the clone (round " + round + " of " + MAX_ROUNDS + ")", meta: "target " + TARGET + "%" }]);
+                body.innerHTML = planPrefix() + repairHtml + prose + buildTasks(curLines, true, true) + fidelityCard(sc, first);
+                showTab("code"); scrollDown();
+                const facc = await callModel(t => displayStreaming(body, t, sid), abortCtl.signal,
+                  { model: r.model, system: BUILDER_SYSTEM + "\n\nThis is a fidelity FIX of a clone you built earlier (shown above). Output the COMPLETE updated HTML file.",
+                    messages: sessionMessages.concat([{ role: "user", content: improvePrompt(sc) }]) });
+                const fapp = extractApp(facc);
+                if (!fapp) break;
+                sessionMessages[sessionMessages.length - 1] = { role: "assistant", content: facc };   // canonical app = refined
+                curLines = fapp.replace(/\s+$/, "").split("\n").length;
+                sessionApp = injectDesign(fapp);
+                setApp(fapp);
+                await previewSettled();
+                const nsc = await scoreClone(r.cloneUrl, sessionApp);
+                if (!nsc) break;
+                const improved = nsc.score > sc.score;
+                repairHtml = taskList([{ status: improved ? "done" : "fail", label: "Refined the clone (round " + round + ")", meta: sc.score + "% → " + nsc.score + "%" }]);
+                sc = nsc;
+                body.innerHTML = planPrefix() + repairHtml + prose + buildTasks(curLines, true, true) + fidelityCard(sc, first);
+                scrollDown();
+                if (!improved) break;   // a round that didn't help -> stop
+              }
+              if (sc) { body.innerHTML = planPrefix() + repairHtml + prose + buildTasks(curLines, true, true) + fidelityCard(sc, first); scrollDown(); }
             } catch (e) { if (e.name === "AbortError") throw e; }
           }
         }
