@@ -45,7 +45,7 @@ param(
   [switch]$Help
 )
 
-$AppVersion = '1.5.0'   # NB: not $Version — that name is the -Version switch param
+$AppVersion = '1.6.0'   # NB: not $Version — that name is the -Version switch param
 $Ctx = 8192             # default context window — big enough for real work, light on RAM
 $HomeDir = if ($env:USERPROFILE) { $env:USERPROFILE } else { $HOME }
 $ChatDir = Join-Path $HomeDir '.local-llm-setup\chat'   # where the chat page is written
@@ -575,13 +575,23 @@ const BUILDER_SYSTEM =
   "flex child sized with h-full (that collapses to nothing). Always set explicit text colours (e.g. text-white on dark heroes). " +
   "Make it responsive and polished — real spacing, a clear visual hierarchy, hover states on buttons. " +
   "Respond with ONE complete HTML file in a single ```html code block (write any extra CSS/JS inline). " +
-  "Put a one-line description before the code. When asked for a change, output the FULL updated file again. " +
+  "Put a one-line description before the code — and if you're correcting a previous version, say plainly in that line what was wrong and what you changed. When asked for a change, output the FULL updated file again. " +
   "For non-build questions, answer normally.";
 const AGENT_SYSTEM =
   "You are a local coding agent on the user's machine, working inside a sandboxed workspace folder. " +
-  "You have two tools. To run a shell command, output EXACTLY one block:\n<run>the command</run>\n" +
-  "To write a file (path is relative to the workspace), output EXACTLY:\n<write path=\"relative/path\">\nfile contents\n</write>\n" +
-  "Output ONE tool call, then STOP and wait — I will reply with <result>...</result>. Use the result to decide the next step. " +
+  "You have these tools — output EXACTLY ONE per turn, then STOP and wait for my <result>:\n" +
+  "<run>shell command</run>  — run a command in the workspace\n" +
+  "<write path=\"rel/path\">\nfile contents\n</write>  — write a workspace file\n" +
+  "<read path=\"rel/path\">  — read a workspace file\n" +
+  "<fetch url=\"https://...\">  — fetch a public web page's raw HTML\n" +
+  "<inspect url=\"https://...\">  — a STRUCTURED digest of a page: title, sections, headings, links, images, the real colour palette and font families\n" +
+  "<extract url=\"https://...\">  — just a page's design tokens (palette + fonts)\n" +
+  "To CLONE or recreate a real website, FIRST <inspect url=\"...\"> to observe its real structure, palette and fonts — never invent them — then write the page to match those exact colours, fonts and sections. " +
+  "Use the result to decide the next step. " +
+  "Narrate like a careful engineer thinking out loud: before each tool call, say in ONE short line what you're about to do and why. " +
+  "After each <result>, ASSESS it honestly — if it failed, came back empty, or looks wrong, name the problem AND why in one line, say how you'll fix it, then do the fix. " +
+  "Examples of the voice: \"That command errored — no such file; let me list the directory first.\"  \"My regex undercounted (caught 3 of ~25 files) so that result can't be trusted; let me parse each block independently instead.\"  \"My first parse mangled the multi-line input — let me handle it properly.\" " +
+  "Never claim something worked without checking the result. Own mistakes plainly — no bravado, no pretending it was fine. " +
   "When the task is fully done, reply normally with NO tool tags. Keep commands safe and scoped to the workspace.";
 // The "plan first" brain: a reasoner turns a short ask into a concrete build spec
 // the coder then implements. This is what removes the handholding.
@@ -645,12 +655,30 @@ function route(text) {
   const newAppRe = /\b(start over|from scratch|scratch|rebuild|new (app|page|project|website|site|design|one|build)|different (app|page|thing)|instead build|build a new|another (app|page)|scrap (it|this))\b/;
   const trivial = text.length < 28 && !/\b(with|that|and|including|plus|featuring|like)\b/i.test(t);
   const hasApp = !!currentApp;
+  // clone intent: a URL + a recreate verb, with the tool server available -> observe then build
+  const urlM = text.match(/https?:\/\/[^\s)"'<>]+/i);
+  const cloneIntent = /\b(clone|recreate|replicate|reproduce|rebuild|copy|mimic|inspired by|like (this|the)|same as)\b/.test(t);
+  if (urlM && cloneIntent && agentReady) return { kind: "build", model: bestCoder, plan: false, cloneUrl: urlM[0] };
   // a clear non-build question -> the reasoner answers (with or without an app)
   if (reasonRe.test(t) && !hasBuildWord.test(t)) return { kind: "reason", model: bestReasoner || bestCoder, plan: false };
   // app already on screen -> iterate on it (fast, no re-plan), unless they ask to start fresh
   if (hasApp && !newAppRe.test(t)) return { kind: "edit", model: bestCoder, plan: false };
   // no app yet (or an explicit new build) -> build; plan first unless it's a trivial one-liner
   return { kind: "build", model: bestCoder, plan: !!bestReasoner && !trivial };
+}
+// Turn an inspect() digest into a concrete build spec — the REAL palette, fonts,
+// sections and copy from the page, so the coder transcribes it instead of inventing.
+function cloneSpecFromDigest(d) {
+  const L = ["Recreate this web page as ONE self-contained HTML file: " + (d.title || d.url)];
+  if (d.description) L.push("Tagline / description: " + d.description);
+  if (d.palette && d.palette.length) L.push("Use THESE exact colours from the site (hex/rgb): " + d.palette.join(", "));
+  if (d.fonts && d.fonts.length) L.push("Use THESE fonts (load from Google Fonts if needed): " + d.fonts.join(" · "));
+  if (d.sections && d.sections.length) L.push("Section order, top to bottom: " + d.sections.map(s => s.tag + (s.id ? "#" + s.id : "")).join(" › "));
+  if (d.headings && d.headings.length) L.push("Real headings / copy to reuse:\n" + d.headings.slice(0, 16).map(h => "• (" + h.level + ") " + h.text).join("\n"));
+  if (d.nav_links && d.nav_links.length) { const nav = d.nav_links.map(l => l.text).filter(Boolean).slice(0, 8); if (nav.length) L.push("Nav items: " + nav.join(" · ")); }
+  if (d.counts && d.counts.images) L.push("It has ~" + d.counts.images + " images — use https://picsum.photos/seed/NAME/W/H placeholders in those spots.");
+  L.push("Match the layout, spacing and visual hierarchy as closely as you can. Make it responsive.");
+  return L.join("\n");
 }
 // human label for a model: "qwen2.5-coder · 14B · Coder"
 function roleTag(r) { return r === "coder" ? "Coder" : r === "reasoner" ? "Reasoner" : "General"; }
@@ -1014,11 +1042,20 @@ el("newBtn").addEventListener("click", newChat);
 el("sbToggle").addEventListener("click", () => sidebar.classList.toggle("collapsed"));
 
 /* ---------- agent tools ---------- */
+const READONLY_TOOLS = ["read", "fetch", "inspect", "extract"];
 function findToolCall(text) {
   const run = text.match(/<run>([\s\S]*?)<\/run>/i);
   if (run) return { kind: "run", cmd: run[1].trim() };
   const wr = text.match(/<write\s+path="([^"]+)">\n?([\s\S]*?)<\/write>/i);
   if (wr) return { kind: "write", path: wr[1].trim(), content: wr[2] };
+  const rd = text.match(/<read\s+path="([^"]+)"\s*\/?>/i);
+  if (rd) return { kind: "read", path: rd[1].trim() };
+  const fe = text.match(/<fetch\s+url="([^"]+)"\s*\/?>/i);
+  if (fe) return { kind: "fetch", url: fe[1].trim() };
+  const ins = text.match(/<inspect\s+url="([^"]+)"\s*\/?>/i);
+  if (ins) return { kind: "inspect", url: ins[1].trim() };
+  const ex = text.match(/<extract\s+url="([^"]+)"\s*\/?>/i);
+  if (ex) return { kind: "extract", url: ex[1].trim() };
   return null;
 }
 function approvalCard(tool) {
@@ -1046,12 +1083,26 @@ async function runTool(tool) {
     term('<span style="color:#5b6472">[exit ' + j.code + ']</span>\n\n');
     showTab("term");
     return "exit code " + j.code + "\n" + out.slice(0, 4000);
-  } else {
+  } else if (tool.kind === "write") {
     const r = await fetch(AGENT_URL + "/api/agent/write", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path: tool.path, content: tool.content }) });
     const j = await r.json();
     term('<span class="cmd">[write] ' + escapeHtml(tool.path) + '</span> ' + (j.ok ? "ok" : ('<span class="err">' + escapeHtml(j.error || "failed") + "</span>")) + "\n");
     showTab("term");
     return j.ok ? ("wrote " + tool.path) : ("error: " + (j.error || "failed"));
+  } else {
+    // read-only tools: read | fetch | inspect | extract
+    const label = tool.kind === "read" ? tool.path : tool.url;
+    const payload = tool.kind === "read" ? { path: tool.path } : { url: tool.url };
+    term('<span class="cmd">[' + tool.kind + '] ' + escapeHtml(label) + '</span>\n'); showTab("term");
+    const r = await fetch(AGENT_URL + "/api/agent/" + tool.kind, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+    const j = await r.json();
+    if (!j.ok) { term('<span class="err">' + escapeHtml(j.error || "failed") + "</span>\n\n"); return tool.kind + " error: " + (j.error || "failed"); }
+    let out;
+    if (tool.kind === "read") out = j.content || "(empty)";
+    else if (tool.kind === "fetch") out = "Fetched " + j.url + " — status " + j.status + (j.truncated ? " (truncated)" : "") + "\n\n" + j.html;
+    else { delete j.ok; out = JSON.stringify(j, null, 1); }   // inspect / extract -> the structured digest
+    term(escapeHtml(out.slice(0, 1400)) + (out.length > 1400 ? "\n  …(" + out.length + " chars)" : "") + "\n\n");
+    return out.slice(0, 6000);
   }
 }
 
@@ -1114,7 +1165,8 @@ async function send() {
         body.innerHTML = render(acc);
         const tool = findToolCall(acc);
         if (tool) {
-          const ok = await approvalCard(tool);
+          // read-only tools (read/fetch/inspect/extract) run directly; mutations are approved
+          const ok = READONLY_TOOLS.includes(tool.kind) ? true : await approvalCard(tool);
           const result = ok ? await runTool(tool) : "skipped by user";
           sessionMessages.push({ role: "user", content: "<result>\n" + result + "\n</result>" });
           continue;
@@ -1129,10 +1181,26 @@ async function send() {
       sessionMessages.push({ role: "assistant", content: acc });
       body.innerHTML = render(stripThink(acc));
     } else {
-      // ---- build / edit ----
+      // ---- build / edit / clone ----
       let spec = "";
+      // clone: OBSERVE the real page first (palette, fonts, sections), then build to it
+      if (r.cloneUrl) {
+        body = addMsg("assistant", "");
+        body.innerHTML = taskList([{ status: "active", label: "Inspecting " + r.cloneUrl }]);
+        if (sid === currentId) showTab("term");
+        try {
+          const dg = await (await fetch(AGENT_URL + "/api/agent/inspect", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url: r.cloneUrl }), signal: abortCtl.signal })).json();
+          if (dg.ok) {
+            spec = cloneSpecFromDigest(dg); buildSpec = spec;
+            body.innerHTML = taskList([{ status: "done", label: "Inspected the page", meta: (dg.palette || []).length + " colours · " + (dg.fonts || []).length + " fonts" }]) + streamPrefix() + buildTasks(0, false, false);
+            scrollDown();
+          } else {
+            body.innerHTML = taskList([{ status: "fail", label: "Couldn't inspect " + r.cloneUrl }]) + render("That page couldn't be fetched (" + (dg.error || "failed") + "). I'll build from your description instead.");
+          }
+        } catch (e) { if (e.name === "AbortError") throw e; }
+      }
       // L1 — plan first: the reasoner turns a short ask into a concrete spec the coder builds to
-      if (r.plan && bestReasoner) {
+      if (r.plan && bestReasoner && !spec) {
         body = addMsg("assistant", "");
         body.innerHTML = planCard("", "active", bestReasoner);
         if (sid === currentId) showTab("code");
@@ -1237,39 +1305,171 @@ function Write-AgentServer {
   param([string]$path)
   $py = @'
 #!/usr/bin/env python3
-# Local LLM Builder — agent server (MVP).
+# Local LLM Builder — agent server.
 #
-# Serves the builder page AND exposes a tiny, sandboxed tool API to it:
-#   GET  /api/agent/ping          -> {ok:true}
-#   POST /api/agent/run  {cmd}    -> run a shell command IN the workspace dir
-#   POST /api/agent/write {path,content} -> write a file UNDER the workspace dir
+# Serves the builder page AND exposes a small, sandboxed tool API to it:
+#   GET  /api/agent/ping              -> {ok:true}
+#   POST /api/agent/run   {cmd}       -> run a shell command IN the workspace dir   (mutating -> approved in UI)
+#   POST /api/agent/write {path,content} -> write a file UNDER the workspace dir    (mutating -> approved in UI)
+#   POST /api/agent/read  {path}      -> read a file UNDER the workspace dir         (read-only)
+#   POST /api/agent/fetch {url}       -> fetch a public web page (raw HTML, capped)  (read-only, network)
+#   POST /api/agent/inspect {url}     -> structured digest of a page: title, sections,
+#                                        headings, links, images, palette, fonts     (read-only, network)
+#   POST /api/agent/extract {url}     -> just the design tokens: palette + fonts      (read-only, network)
 #
-# Safety posture (MVP — see README before shipping):
+# These read/inspect/extract tools are what let the builder CLONE a real site:
+# observe the page (structure + colours + fonts) instead of inventing it.
+#
+# Safety posture:
 #   - binds 127.0.0.1 only (never exposed off the machine)
-#   - CORS + Origin check: browser requests are only accepted from this page's
-#     own origin, so a random website you visit cannot drive your tools
-#   - file writes are confined to the workspace (path-escape is rejected)
+#   - CORS + Origin check: only this page's own origin may drive the tools
+#   - file read/write confined to the workspace (path-escape rejected)
 #   - shell commands run with cwd = workspace and a 30s timeout
-#   - the *page* asks you to Approve every command before it is ever sent here
+#   - network fetch is SSRF-guarded: http/https only, public hosts only
+#     (loopback / private / link-local / reserved IPs rejected, incl. on redirect),
+#     15s timeout, 2 MB cap
+#   - the *page* asks you to Approve every MUTATING tool (run / write) before it runs;
+#     read-only tools (read / fetch / inspect / extract) run directly but are shown
 #
-# It does NOT yet sandbox the command itself (an approved `rm -rf ~` would still
-# run) — approval in the UI is the guardrail. Harden before any default ship.
+# It does NOT sandbox an approved command itself (an approved `rm -rf ~` still runs) —
+# approval in the UI is the guardrail for mutations. Harden before any default ship.
 
-import json, os, subprocess
+import json, os, re, socket, ipaddress, subprocess, urllib.request
+from collections import Counter
+from html.parser import HTMLParser
+from urllib.parse import urljoin, urlsplit
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-HOST, PORT = "127.0.0.1", 8765
+HOST, PORT = "127.0.0.1", int(os.environ.get("LLM_AGENT_PORT", "8765"))
 HOME = os.path.expanduser("~")
 CHAT_DIR  = os.path.join(HOME, ".local-llm-setup", "chat")
 WORKSPACE = os.path.realpath(os.path.join(HOME, ".local-llm-setup", "workspace"))
 os.makedirs(WORKSPACE, exist_ok=True)
 ORIGINS = {f"http://localhost:{PORT}", f"http://127.0.0.1:{PORT}"}
 
+UA = "Mozilla/5.0 (LocalLLMBuilder; +http://localhost) AppleWebKit/537.36"
+FETCH_CAP = 2_000_000          # max bytes pulled from a page
+FETCH_TIMEOUT = 15
+
 def safe_path(rel):
     p = os.path.realpath(os.path.join(WORKSPACE, rel))
     if p != WORKSPACE and not p.startswith(WORKSPACE + os.sep):
         raise ValueError("path escapes the workspace")
     return p
+
+# ---------- network: SSRF-guarded fetch ----------
+def _assert_public(host):
+    """Reject hosts that resolve to anything but a public address (SSRF guard)."""
+    if not host:
+        raise ValueError("no host")
+    for info in socket.getaddrinfo(host, None):
+        ip = ipaddress.ip_address(info[4][0])
+        if (ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved
+                or ip.is_multicast or ip.is_unspecified):
+            raise ValueError(f"blocked non-public address ({ip}) for host {host!r}")
+
+class _GuardedRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        p = urlsplit(newurl)
+        if p.scheme not in ("http", "https"):
+            return None
+        _assert_public(p.hostname)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+_OPENER = urllib.request.build_opener(_GuardedRedirect)
+
+def fetch(url):
+    p = urlsplit(url)
+    if p.scheme not in ("http", "https"):
+        raise ValueError("only http/https URLs are allowed")
+    _assert_public(p.hostname)
+    req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept": "text/html,*/*"})
+    with _OPENER.open(req, timeout=FETCH_TIMEOUT) as r:
+        raw = r.read(FETCH_CAP + 1)
+        final, status = r.geturl(), getattr(r, "status", 200)
+        ctype = r.headers.get("Content-Type", "")
+    return {"final_url": final, "status": status, "ctype": ctype,
+            "html": raw[:FETCH_CAP].decode("utf-8", "replace"), "truncated": len(raw) > FETCH_CAP}
+
+# ---------- html digest (stdlib only) ----------
+_COLOR_RE = re.compile(r'#[0-9a-fA-F]{3,8}\b|rgba?\([^)]*\)|hsla?\([^)]*\)')
+_FONT_RE  = re.compile(r'font-family\s*:\s*([^;}{]+)', re.I)
+
+class _Digest(HTMLParser):
+    def __init__(self, base):
+        super().__init__(convert_charrefs=True)
+        self.base = base
+        self.title = ""; self.desc = ""
+        self.headings = []; self.links = []; self.images = []
+        self.sections = []; self.styles = []; self.font_links = []
+        self._in_title = False; self._in_style = False
+        self._h = None; self._htext = []
+        self._abuf = None; self._ahref = None
+
+    def handle_starttag(self, tag, attrs):
+        a = dict(attrs)
+        if tag == "title": self._in_title = True
+        elif tag == "meta" and a.get("name", "").lower() == "description": self.desc = a.get("content", "")
+        elif tag == "meta" and a.get("property", "").lower() == "og:description" and not self.desc: self.desc = a.get("content", "")
+        elif tag in ("h1", "h2", "h3"): self._h = tag; self._htext = []
+        elif tag == "a" and a.get("href"): self._ahref = urljoin(self.base, a["href"]); self._abuf = []
+        elif tag == "img" and a.get("src"): self.images.append({"src": urljoin(self.base, a["src"]), "alt": (a.get("alt") or "")[:80]})
+        elif tag == "style": self._in_style = True
+        elif tag == "link" and "stylesheet" in (a.get("rel", "") or "").lower():
+            if "fonts.googleapis" in a.get("href", ""): self.font_links.append(a["href"])
+        if tag in ("section", "header", "footer", "nav", "main", "article", "aside") or a.get("id"):
+            self.sections.append({"tag": tag, "id": (a.get("id") or "")[:40], "class": (a.get("class") or "")[:80]})
+        if a.get("style"): self.styles.append(a["style"])
+
+    def handle_endtag(self, tag):
+        if tag == "title": self._in_title = False
+        elif tag in ("h1", "h2", "h3") and self._h == tag:
+            t = "".join(self._htext).strip()
+            if t: self.headings.append({"level": tag, "text": t[:140]})
+            self._h = None
+        elif tag == "a" and self._ahref is not None:
+            self.links.append({"href": self._ahref, "text": "".join(self._abuf).strip()[:60]})
+            self._ahref = None; self._abuf = None
+        elif tag == "style": self._in_style = False
+
+    def handle_data(self, data):
+        if self._in_title: self.title += data
+        if self._h is not None: self._htext.append(data)
+        if self._abuf is not None: self._abuf.append(data)
+        if self._in_style: self.styles.append(data)
+
+def _palette(style_text):
+    c = Counter(m.lower() for m in _COLOR_RE.findall(style_text))
+    return [col for col, _ in c.most_common(16)]
+
+def _fonts(style_text, font_links):
+    out = []
+    for m in _FONT_RE.findall(style_text):
+        f = m.strip().strip('"\'')[:80]
+        if f and f.lower() not in (x.lower() for x in out): out.append(f)
+    for href in font_links:
+        for fam in re.findall(r'family=([^&:]+)', href):
+            fam = fam.replace('+', ' ').strip()
+            if fam and fam.lower() not in (x.lower() for x in out): out.append(fam)
+    return out[:8]
+
+def digest(url):
+    f = fetch(url)
+    d = _Digest(f["final_url"])
+    try: d.feed(f["html"])
+    except Exception: pass
+    style_text = "\n".join(d.styles)
+    return {
+        "url": f["final_url"], "status": f["status"], "truncated": f["truncated"],
+        "title": d.title.strip()[:200], "description": (d.desc or "")[:300],
+        "headings": d.headings[:30],
+        "sections": d.sections[:30],
+        "nav_links": d.links[:30],
+        "images": d.images[:24],
+        "palette": _palette(style_text),
+        "fonts": _fonts(style_text, d.font_links),
+        "counts": {"links": len(d.links), "images": len(d.images), "sections": len(d.sections)},
+    }
 
 class H(BaseHTTPRequestHandler):
     def _cors(self):
@@ -1291,7 +1491,8 @@ class H(BaseHTTPRequestHandler):
         self.send_response(204); self._cors(); self.end_headers()
     def do_GET(self):
         if self.path.startswith("/api/agent/ping"):
-            return self._json(200, {"ok": True, "workspace": WORKSPACE})
+            return self._json(200, {"ok": True, "workspace": WORKSPACE,
+                                    "tools": ["run", "write", "read", "fetch", "inspect", "extract"]})
         name = "index.html" if self.path in ("/", "") else os.path.basename(self.path.split("?")[0])
         fp = os.path.join(CHAT_DIR, name)
         if os.path.isfile(fp):
@@ -1309,7 +1510,8 @@ class H(BaseHTTPRequestHandler):
         n = int(self.headers.get("Content-Length", 0) or 0)
         try: req = json.loads(self.rfile.read(n) or b"{}")
         except Exception: req = {}
-        if self.path.startswith("/api/agent/run"):
+        path = self.path
+        if path.startswith("/api/agent/run"):
             cmd = (req.get("cmd") or "").strip()
             if not cmd: return self._json(400, {"error": "no command"})
             try:
@@ -1317,7 +1519,7 @@ class H(BaseHTTPRequestHandler):
                 return self._json(200, {"stdout": p.stdout, "stderr": p.stderr, "code": p.returncode})
             except subprocess.TimeoutExpired:
                 return self._json(200, {"stdout": "", "stderr": "timed out after 30s", "code": 124})
-        if self.path.startswith("/api/agent/write"):
+        if path.startswith("/api/agent/write"):
             try:
                 fp = safe_path(req.get("path", ""))
                 os.makedirs(os.path.dirname(fp), exist_ok=True)
@@ -1325,11 +1527,40 @@ class H(BaseHTTPRequestHandler):
                 return self._json(200, {"ok": True})
             except Exception as e:
                 return self._json(200, {"ok": False, "error": str(e)})
+        if path.startswith("/api/agent/read"):
+            try:
+                fp = safe_path(req.get("path", ""))
+                with open(fp, "r", errors="replace") as f: data = f.read(200_000)
+                return self._json(200, {"ok": True, "content": data})
+            except Exception as e:
+                return self._json(200, {"ok": False, "error": str(e)})
+        if path.startswith("/api/agent/fetch"):
+            try:
+                f = fetch((req.get("url") or "").strip())
+                # raw HTML is token-heavy; hand back a capped slice for the model
+                return self._json(200, {"ok": True, "url": f["final_url"], "status": f["status"],
+                                        "html": f["html"][:12000], "truncated": f["truncated"] or len(f["html"]) > 12000})
+            except Exception as e:
+                return self._json(200, {"ok": False, "error": str(e)})
+        if path.startswith("/api/agent/inspect"):
+            try:
+                return self._json(200, {"ok": True, **digest((req.get("url") or "").strip())})
+            except Exception as e:
+                return self._json(200, {"ok": False, "error": str(e)})
+        if path.startswith("/api/agent/extract"):
+            try:
+                d = digest((req.get("url") or "").strip())
+                return self._json(200, {"ok": True, "url": d["url"], "title": d["title"],
+                                        "palette": d["palette"], "fonts": d["fonts"],
+                                        "sections": [s["tag"] for s in d["sections"]][:20]})
+            except Exception as e:
+                return self._json(200, {"ok": False, "error": str(e)})
         return self._json(404, {"error": "unknown endpoint"})
     def log_message(self, *a): pass
 
 if __name__ == "__main__":
     print(f"Local LLM agent server -> http://{HOST}:{PORT}   (workspace: {WORKSPACE})")
+    print("  tools: run, write, read, fetch, inspect, extract")
     ThreadingHTTPServer((HOST, PORT), H).serve_forever()
 '@
   Set-Content -LiteralPath $path -Value $py -Encoding utf8

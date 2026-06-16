@@ -4,6 +4,37 @@ All notable changes to this project are documented here. Format based on
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/); this project aims to
 follow [Semantic Versioning](https://semver.org/).
 
+## [1.6.0] — 2026-06-17
+
+Gives the local agent **real tools** — so it can *observe the world and check its
+work*, the way Claude Code and Lovable do — and a voice that **owns its mistakes**.
+The headline: it can now **clone a real website** by looking at it, not guessing.
+
+### Added
+- **Web tools (stdlib only — no new dependencies).** The agent server gains four
+  read-only tools, callable by the model:
+  - `<inspect url>` — a structured digest of any public page: title, sections, headings,
+    links, images, the **real colour palette and font families**.
+  - `<extract url>` — just a page's design tokens (palette + fonts).
+  - `<fetch url>` — a page's raw HTML.
+  - `<read path>` — read a workspace file.
+- **Website cloning.** Ask the builder to *"clone &lt;url&gt;"* and it **inspects the real
+  page first**, then builds to its actual palette, fonts, sections and copy — rendered
+  live in the preview. Observe-then-build instead of invent.
+- **Self-correcting voice.** The agent narrates like a careful engineer: states intent,
+  checks each result, and when something's wrong **names what + why + the fix** before
+  redoing it — and never claims success without checking.
+
+### Security
+- The new network tool is **SSRF-guarded**: http/https only, **public hosts only**
+  (loopback / private / link-local / cloud-metadata IPs are rejected, including on
+  redirects), 15 s timeout, 2 MB cap. Bound to `127.0.0.1`, origin-locked as before.
+- Read-only tools (read/fetch/inspect/extract) run directly; **mutating** tools
+  (run/write) still require per-action approval in the UI.
+
+### Changed
+- `LLM_AGENT_PORT` env var overrides the agent server port (default `8765`).
+
 ## [1.5.0] — 2026-06-17
 
 Makes the builder feel like a real tool, not a toy — it **plans before it builds**,
