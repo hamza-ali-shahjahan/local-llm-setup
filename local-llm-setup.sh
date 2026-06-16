@@ -29,7 +29,7 @@
 #   ./local-llm-setup.sh --help
 #
 set -euo pipefail
-VERSION="1.4.0"
+VERSION="1.5.0"
 
 # ----------------------------------------------------------------------------
 # Pretty output (degrades gracefully if the terminal has no color)
@@ -374,7 +374,16 @@ write_chat_html() {
   .menu li { padding: 8px 10px 8px 26px; border-radius: 6px; cursor: pointer; font-size: 13px; white-space: nowrap; position: relative; }
   .menu li:hover { background: #1c2636; }
   .menu li.sel { color: #7fd0ff; }
-  .menu li.sel::before { content: "\2713"; position: absolute; left: 9px; }
+  .menu li.sel::before { content: "\2713"; position: absolute; left: 9px; top: 9px; }
+  .menu { min-width: 270px; }
+  .menu li.auto, .menu li.model { white-space: normal; padding: 9px 10px 9px 26px; }
+  .menu li.sep { padding: 8px 10px 3px 10px; font-size: 10.5px; text-transform: uppercase; letter-spacing: .05em; color: #4d5765; cursor: default; }
+  .menu li.sep:hover { background: transparent; }
+  .menu .mtop { display: flex; align-items: center; gap: 7px; }
+  .menu .mname { font-weight: 500; }
+  .menu .msub { font-size: 11.5px; color: #6b7787; margin-top: 2px; }
+  .menu .mbadge { font-size: 10px; font-weight: 600; color: #9fc2ff; background: #1a2740; border: 1px solid #2a3f63; border-radius: 5px; padding: 1px 6px; }
+  .menu li.auto .mbadge { color: #aef0c4; background: #14271c; border-color: #2a5a3c; }
 
   main { flex: 1; display: flex; min-height: 0; }
 
@@ -389,11 +398,12 @@ write_chat_html() {
   .chatlist .item:hover { background: #141a24; }
   .chatlist .item.on { background: #182236; color: #e6e6e6; }
   .chatlist .item .ttl { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .chatlist .item .sdot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: #2b6cff; box-shadow: 0 0 7px #2b6cff; animation: bpulse 1s ease-in-out infinite; }
   .chatlist .item .del { opacity: 0; color: #6b7787; font-size: 15px; }
   .chatlist .item:hover .del { opacity: 1; }
   .chatlist .empty2 { color: #4d5765; font-size: 12px; padding: 10px 9px; }
 
-  .chat { flex: 0 0 42%; min-width: 320px; display: flex; flex-direction: column; min-height: 0; border-right: 1px solid #1e2430; }
+  .chat { flex: 0 0 42%; min-width: 320px; display: flex; flex-direction: column; min-height: 0; border-right: 1px solid #1e2430; position: relative; }
   .workspace { flex: 1; display: flex; flex-direction: column; min-height: 0; min-width: 0; background: #0a0d13; }
 
   #log { flex: 1; overflow-y: auto; padding: 20px 18px; position: relative; }
@@ -401,12 +411,57 @@ write_chat_html() {
   .msg .who { flex: none; width: 28px; height: 28px; border-radius: 7px; font-size: 12px; display: flex; align-items: center; justify-content: center; font-weight: 700; }
   .msg.user .who { background: #2b4a78; color: #dbe9ff; }
   .msg.bot .who { background: #1d3a2a; color: #aef0c4; }
-  .msg .body { padding-top: 4px; white-space: pre-wrap; word-wrap: break-word; min-width: 0; flex: 1; }
+  .msg .body { padding-top: 4px; word-wrap: break-word; min-width: 0; flex: 1; }
   .msg .body pre { background: #0a0d13; border: 1px solid #1e2430; border-radius: 8px; padding: 11px 13px; overflow-x: auto; white-space: pre; }
   .msg .body code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; }
   .msg .body :not(pre) > code { background: #1a1f29; padding: 1px 5px; border-radius: 4px; }
+  /* markdown formatting in chat bubbles */
+  .msg .body p { margin: 0 0 10px; }
+  .msg .body > *:last-child, .msg .body p:last-child { margin-bottom: 0; }
+  .msg .body .mdh { font-weight: 600; color: #dbe6f2; margin: 14px 0 6px; line-height: 1.3; }
+  .msg .body .mdh:first-child { margin-top: 2px; }
+  .msg .body .mdh1 { font-size: 17px; }
+  .msg .body .mdh2 { font-size: 15.5px; }
+  .msg .body .mdh3, .msg .body .mdh4, .msg .body .mdh5, .msg .body .mdh6 { font-size: 14px; color: #c2cedd; }
+  .msg .body ul, .msg .body ol { margin: 4px 0 10px; padding-left: 22px; }
+  .msg .body li { margin: 3px 0; }
+  .msg .body li::marker { color: #6b7787; }
+  .msg .body a { color: #7fd0ff; }
+  .msg .body strong { color: #e6edf5; }
+  .msg .body hr { border: 0; border-top: 1px solid #1e2430; margin: 12px 0; }
   .codecard { background: #0a0d13; border: 1px solid #233; border-radius: 8px; padding: 10px 12px; color: #9fb3c8; font-size: 13px; }
   .codecard b { color: #cfe3ff; }
+  .building { display: inline-flex; align-items: center; gap: 9px; background: #11151d; border: 1px solid #2a3a52; border-radius: 9px; padding: 9px 13px; color: #aab8c8; font-size: 13px; }
+  .building .bdot, .wsbuild .bdot { width: 9px; height: 9px; border-radius: 50%; background: #2b6cff; animation: bpulse 1s ease-in-out infinite; flex: none; }
+  .building .bmeta { color: #5b6472; }
+  .wsbuild { position: absolute; inset: 0; z-index: 6; display: flex; align-items: center; justify-content: center; gap: 11px; background: #0a0d13; color: #8a95a5; font-size: 14px; }
+  .tabbtn { margin-left: auto; background: transparent; border: 1px solid #2a3140; color: #8a95a5; border-radius: 7px; padding: 5px 11px; font-size: 12.5px; cursor: pointer; }
+  .tabbtn:hover { background: #1a2230; color: #e6e6e6; }
+  .wsload { position: absolute; inset: 0; z-index: 7; display: flex; align-items: center; justify-content: center; gap: 10px; background: rgba(10,13,19,.82); color: #8a95a5; font-size: 13px; }
+  .wsload .spin { width: 18px; height: 18px; border: 2px solid #2a3140; border-top-color: #2b6cff; border-radius: 50%; animation: spin .7s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @keyframes bpulse { 0%, 100% { opacity: .3; transform: scale(.75); } 50% { opacity: 1; transform: scale(1); } }
+  /* traceable task list (Claude-Code style): honest queued -> active -> done */
+  .tasks { display: flex; flex-direction: column; gap: 8px; background: #0f131b; border: 1px solid #20283a; border-radius: 10px; padding: 11px 13px; }
+  .tk { display: flex; align-items: center; gap: 9px; font-size: 13px; }
+  .tk .tki { flex: none; width: 15px; height: 15px; display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; }
+  .tk-queued { color: #5b6472; }
+  .tk-queued .tki::before { content: "\25CB"; color: #4d5765; font-size: 12px; }
+  .tk-active { color: #cfe3ff; }
+  .tk-active .tki { border: 2px solid #243049; border-top-color: #2b6cff; border-radius: 50%; animation: spin .7s linear infinite; }
+  .tk-done { color: #b6c0cf; }
+  .tk-done .tki::before { content: "\2713"; color: #2ecc71; font-weight: 700; font-size: 13px; }
+  .tk-fail .tki::before { content: "\2715"; color: #ff7a7a; font-weight: 700; }
+  .tk .meta { color: #5b6472; }
+  /* plan-first card: the spec the reasoner wrote, collapsible */
+  .plan { background: #0f131b; border: 1px solid #20283a; border-radius: 10px; padding: 9px 13px; margin-bottom: 9px; }
+  .plan > summary { display: flex; align-items: center; justify-content: space-between; cursor: pointer; list-style: none; }
+  .plan > summary::-webkit-details-marker { display: none; }
+  .plan > summary .tk { font-size: 13px; }
+  .plan .planhint { font-size: 11px; color: #5b6472; }
+  .plan[open] .planhint::after { content: " \25B2"; }
+  .plan:not([open]) .planhint::after { content: " \25BC"; }
+  .plan .planbody { white-space: pre-wrap; color: #9fb0c4; font-size: 12.5px; line-height: 1.5; margin-top: 9px; padding-top: 9px; border-top: 1px solid #1b2233; }
   .think { color: #7d8694; font-style: italic; border-left: 2px solid #2a3140; padding-left: 10px; margin: 6px 0; }
   .approve { background: #11151d; border: 1px solid #33405a; border-radius: 10px; padding: 11px 13px; margin-top: 6px; }
   .approve .lbl { font-size: 12px; color: #8a95a5; margin-bottom: 6px; }
@@ -422,16 +477,23 @@ write_chat_html() {
   .empty h2 { color: #aab4c4; font-weight: 600; margin: 0 0 6px; }
   .empty .ex { margin-top: 14px; font-size: 13px; }
   .empty .ex span { color: #7fd0ff; cursor: pointer; border-bottom: 1px dashed #2a4a5a; }
-  .jump { position: absolute; right: 16px; bottom: 12px; background: #1c2433; border: 1px solid #2a3140; color: #c7d0dd; border-radius: 20px; padding: 6px 12px; font-size: 12px; cursor: pointer; box-shadow: 0 6px 18px rgba(0,0,0,.4); }
+  .jump { position: absolute; right: 20px; bottom: 92px; z-index: 8; background: #1c2433; border: 1px solid #2a3140; color: #c7d0dd; border-radius: 20px; padding: 6px 13px; font-size: 12px; cursor: pointer; box-shadow: 0 6px 18px rgba(0,0,0,.45); }
+  .jump:hover { background: #243049; }
   .jump[hidden] { display: none; }
 
   .composer { flex: none; border-top: 1px solid #1e2430; background: #11151d; padding: 12px 16px 14px; }
-  .inrow { display: flex; gap: 10px; align-items: flex-end; }
-  textarea { flex: 1; resize: none; background: #0d1017; color: #e6e6e6; border: 1px solid #2a3140; border-radius: 10px; padding: 10px 12px; font: inherit; min-height: 42px; max-height: 160px; }
-  textarea:focus, .picker-btn:focus { outline: none; border-color: #2b6cff; }
-  button.send { flex: none; height: 42px; padding: 0 18px; background: #2b6cff; color: #fff; border: 0; border-radius: 10px; font-weight: 600; cursor: pointer; }
+  .inrow { display: flex; gap: 10px; align-items: flex-end; background: #0d1017; border: 1px solid #2a3140; border-radius: 13px; padding: 7px 7px 7px 4px; transition: border-color .15s; }
+  .inrow:focus-within { border-color: #2b6cff; }
+  textarea { flex: 1; resize: none; background: transparent; color: #e6e6e6; border: 0; border-radius: 10px; padding: 9px 10px; font: inherit; line-height: 1.45; min-height: 40px; max-height: 184px; }
+  textarea::placeholder { color: #5b6472; }
+  textarea:focus, .picker-btn:focus { outline: none; }
+  button.send { flex: none; align-self: stretch; min-height: 38px; padding: 0 18px; background: #2b6cff; color: #fff; border: 0; border-radius: 9px; font-weight: 600; cursor: pointer; transition: background .15s; }
+  button.send:hover { background: #3b78ff; }
+  button.send.stop { background: #d6453f; }
+  button.send.stop:hover { background: #e1554f; }
   button.send:disabled { opacity: .5; cursor: default; }
-  .hint { color: #5b6472; font-size: 11.5px; text-align: center; margin-top: 7px; }
+  .hint { color: #5b6472; font-size: 11.5px; text-align: center; margin-top: 8px; }
+  .hint b { color: #7d8694; font-weight: 600; }
 
   .tabs { flex: none; display: flex; align-items: center; gap: 4px; padding: 8px 12px; border-bottom: 1px solid #1e2430; }
   .tab { background: transparent; border: 0; color: #8a95a5; padding: 6px 12px; border-radius: 7px; font-size: 13px; cursor: pointer; }
@@ -477,14 +539,14 @@ write_chat_html() {
           <div>Describe an app and watch it appear in the preview. 100% local.</div>
           <div class="ex">Try: <span data-ex="Build me a stopwatch with start, stop, and reset.">a stopwatch</span> &middot; <span data-ex="Build a to-do list that saves to localStorage.">a to-do list</span> &middot; <span data-ex="Build a tip calculator.">a tip calculator</span></div>
         </div>
-        <button class="jump" id="jump" hidden>Jump to latest &darr;</button>
       </div>
+      <button class="jump" id="jump" hidden>Jump to latest &darr;</button>
       <div class="composer">
         <div class="inrow">
-          <textarea id="input" rows="1" placeholder="Describe an app to build, or ask anything...  (Enter to send, Shift+Enter = new line)"></textarea>
+          <textarea id="input" rows="1" placeholder="Describe an app to build, or ask anything&hellip;"></textarea>
           <button class="send" id="send">Send</button>
         </div>
-        <div class="hint" id="hint">Talking to Ollama at http://localhost:11434</div>
+        <div class="hint" id="hint"><b>Enter</b> to send &middot; <b>Shift+Enter</b> for a new line</div>
       </div>
     </section>
 
@@ -493,63 +555,184 @@ write_chat_html() {
         <button class="tab on" id="tabPreview" data-tab="preview">Preview</button>
         <button class="tab" id="tabCode" data-tab="code">Code</button>
         <button class="tab" id="tabTerm" data-tab="term">Terminal</button>
+        <button class="tabbtn" id="refreshBtn" title="Reload the preview">&#8635; Refresh</button>
       </div>
       <div class="wsbody">
         <iframe id="preview" sandbox="allow-scripts allow-forms allow-modals allow-popups"></iframe>
         <pre id="codeview" class="hidden"></pre>
         <pre id="termview" class="hidden"></pre>
         <div class="wsempty" id="wsempty"><b>No app yet</b><div>Ask the model to build something &mdash; it'll render here, live.</div></div>
+        <div class="wsbuild hidden" id="wsbuild"><span class="bdot"></span> Building the app&hellip;</div>
+        <div class="wsload hidden" id="wsload"><span class="spin"></span> Loading preview&hellip;</div>
       </div>
     </section>
   </main>
+
+  <!-- Design system for generated apps. Lives in an INERT <template> (never a JS
+       string), so an embedded </script> can never close the page's own script. -->
+  <template id="designHead"><style>
+:root{--background:0 0% 100%;--foreground:222 47% 11%;--card:0 0% 100%;--card-foreground:222 47% 11%;--popover:0 0% 100%;--popover-foreground:222 47% 11%;--primary:222 47% 11%;--primary-foreground:210 40% 98%;--secondary:210 40% 96%;--secondary-foreground:222 47% 11%;--muted:210 40% 96%;--muted-foreground:215 16% 47%;--accent:210 40% 96%;--accent-foreground:222 47% 11%;--destructive:0 84% 60%;--destructive-foreground:210 40% 98%;--border:214 32% 91%;--input:214 32% 91%;--ring:222 47% 11%;--radius:0.6rem;}
+.dark{--background:222 47% 6%;--foreground:210 40% 98%;--card:222 47% 9%;--card-foreground:210 40% 98%;--popover:222 47% 9%;--popover-foreground:210 40% 98%;--primary:210 40% 98%;--primary-foreground:222 47% 11%;--secondary:217 33% 17%;--secondary-foreground:210 40% 98%;--muted:217 33% 17%;--muted-foreground:215 20% 65%;--accent:217 33% 17%;--accent-foreground:210 40% 98%;--destructive:0 63% 31%;--destructive-foreground:210 40% 98%;--border:217 33% 20%;--input:217 33% 20%;--ring:212 27% 84%;}
+*{border-color:hsl(var(--border));}
+body{background:hsl(var(--background));color:hsl(var(--foreground));font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;}
+</style>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>tailwind.config={theme:{extend:{colors:{border:"hsl(var(--border))",input:"hsl(var(--input))",ring:"hsl(var(--ring))",background:"hsl(var(--background))",foreground:"hsl(var(--foreground))",primary:{DEFAULT:"hsl(var(--primary))",foreground:"hsl(var(--primary-foreground))"},secondary:{DEFAULT:"hsl(var(--secondary))",foreground:"hsl(var(--secondary-foreground))"},destructive:{DEFAULT:"hsl(var(--destructive))",foreground:"hsl(var(--destructive-foreground))"},muted:{DEFAULT:"hsl(var(--muted))",foreground:"hsl(var(--muted-foreground))"},accent:{DEFAULT:"hsl(var(--accent))",foreground:"hsl(var(--accent-foreground))"},card:{DEFAULT:"hsl(var(--card))",foreground:"hsl(var(--card-foreground))"}},borderRadius:{xl:"calc(var(--radius) + 4px)",lg:"var(--radius)",md:"calc(var(--radius) - 2px)",sm:"calc(var(--radius) - 4px)"}}}};</script></template>
+
+  <!-- Self-repair: a tiny error-catcher injected into every preview. Reports runtime
+       errors back to the builder so it can fix them. Inert <template> -> safe. -->
+  <template id="errHook"><script>
+(function(){
+  function R(k,m){try{parent.postMessage({__llmbuilder:1,kind:k,msg:String(m).slice(0,400)},"*");}catch(e){}}
+  addEventListener("error",function(e){R("error",(e.message||"Script error")+(e.filename?" @ "+String(e.filename).split("/").pop()+":"+e.lineno:""));});
+  addEventListener("unhandledrejection",function(e){R("error","Unhandled promise rejection: "+((e.reason&&e.reason.message)||e.reason||""));});
+})();
+</script></template>
 
 <script>
 const API = "http://localhost:11434";
 const AGENT_URL = location.origin;   // the page is served by the agent server (when present)
 const BUILDER_SYSTEM =
-  "You are a local web-app builder (like Lovable or Bolt) running on the user's machine. " +
-  "When the user asks you to build, create, make, or modify an app, page, UI, game, widget, or tool, " +
-  "respond with ONE complete, self-contained HTML file inside a single ```html code block — all CSS and " +
-  "JavaScript inline, no external libraries, CDNs, or build steps. Put a one-line description before the code. " +
-  "When the user asks for a change, output the FULL updated file again. For non-build questions, answer normally.";
+  "You are a local web-app builder, like Lovable or v0, running on the user's machine. " +
+  "Tailwind CSS and a shadcn-style design system are ALREADY loaded in the preview, so use Tailwind utility " +
+  "classes freely — do NOT add the Tailwind CDN or a tailwind config yourself. Lean on the design tokens for a " +
+  "clean, modern look: bg-background / text-foreground, bg-card, text-muted-foreground, border, rounded-lg / rounded-xl, " +
+  "For a DARK theme, add class=\"dark\" to the <html> tag — the tokens switch to dark automatically (keep using bg-background / bg-card / text-foreground). " +
+  "For a coloured accent (e.g. purple, emerald), use a literal Tailwind class on the key elements, like bg-purple-600 / hover:bg-purple-700 on buttons. " +
+  "generous padding, and subtle shadows (shadow-sm / shadow-md). For any image use https://picsum.photos/seed/NAME/W/H " +
+  "(e.g. https://picsum.photos/seed/hero/1600/900) which always loads. " +
+  "When text sits OVER an image, always keep it legible: put the image in a relative container with the text above it, " +
+  "and add a dark overlay (e.g. an absolute inset div with bg-black/50) or a gradient behind the text. " +
+  "Give a hero or any section with a background image a REAL height (e.g. min-h-[70vh] or min-h-screen) and make the " +
+  "image an absolute inset-0 w-full h-full object-cover layer BEHIND a relative z-10 content container — never a plain " +
+  "flex child sized with h-full (that collapses to nothing). Always set explicit text colours (e.g. text-white on dark heroes). " +
+  "Make it responsive and polished — real spacing, a clear visual hierarchy, hover states on buttons. " +
+  "Respond with ONE complete HTML file in a single ```html code block (write any extra CSS/JS inline). " +
+  "Put a one-line description before the code. When asked for a change, output the FULL updated file again. " +
+  "For non-build questions, answer normally.";
 const AGENT_SYSTEM =
   "You are a local coding agent on the user's machine, working inside a sandboxed workspace folder. " +
   "You have two tools. To run a shell command, output EXACTLY one block:\n<run>the command</run>\n" +
   "To write a file (path is relative to the workspace), output EXACTLY:\n<write path=\"relative/path\">\nfile contents\n</write>\n" +
   "Output ONE tool call, then STOP and wait — I will reply with <result>...</result>. Use the result to decide the next step. " +
   "When the task is fully done, reply normally with NO tool tags. Keep commands safe and scoped to the workspace.";
+// The "plan first" brain: a reasoner turns a short ask into a concrete build spec
+// the coder then implements. This is what removes the handholding.
+const SPEC_SYSTEM =
+  "You are a senior product engineer planning a single-page web app for a fast local coder model to build. " +
+  "Given the user's request, write a SHORT, concrete build spec — no code, no preamble. Use this exact shape:\n" +
+  "Title: <one line>\n" +
+  "Features:\n- <bullet>\n- <bullet> (the key interactions/behaviours)\n" +
+  "Sections: <the main UI blocks, top to bottom>\n" +
+  "States: <empty / loading / error / active states that matter>\n" +
+  "Style: <one line — modern, clean, shadcn-like; mention accent colour + layout>\n" +
+  "Be specific and opinionated so nothing is left ambiguous. Keep it under ~14 lines total. Do not write HTML.";
 
 const el = id => document.getElementById(id);
 const log = el("log"), empty = el("empty"), input = el("input"), sendBtn = el("send");
 const dot = el("dot"), hint = el("hint"), jump = el("jump");
 const pickerBtn = el("pickerBtn"), pickerName = el("pickerName"), menu = el("menu");
-const preview = el("preview"), codeview = el("codeview"), termview = el("termview"), wsempty = el("wsempty");
+const preview = el("preview"), codeview = el("codeview"), termview = el("termview"), wsempty = el("wsempty"), wsbuild = el("wsbuild"), wsload = el("wsload"), refreshBtn = el("refreshBtn");
 const tabPreview = el("tabPreview"), tabCode = el("tabCode"), tabTerm = el("tabTerm"), dlBtn = el("dlBtn");
 const sidebar = el("sidebar"), chatlist = el("chatlist"), agentChk = el("agentChk"), agentLabel = el("agentLabel");
 
-let messages = [], busy = false, currentModel = "", currentApp = "", stick = true;
+let messages = [], busy = false, currentModel = "", currentApp = "", stick = true, buildingApp = false;
 let currentId = newId(), agentReady = false;
+let abortCtl = null;                 // aborts the in-flight generation (Stop button)
+let pendingBuild = null;             // { body, lines } awaiting the preview's load event
+let buildSpec = "", repairHtml = ""; // plan spec + repair status; the prefix is rebuilt live each paint
+let planOpen = false;                // is the plan card expanded? persisted across streaming repaints
+const buildingIds = new Set();       // project ids generating right now -> sidebar status dot
+// model routing: Auto picks the best brain per task; the picker is an override
+let autoMode = true;
+let models = [];                     // [{ name, params, role, lean }]
+let bestCoder = "", bestReasoner = "", fastest = "";
 function newId() { return "c" + Math.random().toString(36).slice(2, 9); }
+
+/* ---------- model index + routing ---------- */
+function parseParams(name) { const m = name.match(/(\d+(?:\.\d+)?)\s*b\b/i); return m ? parseFloat(m[1]) : 0; }
+function parseRole(name) {
+  if (/r1|reason|qwq|\bo1\b|think/i.test(name)) return "reasoner";
+  if (/coder|code|starcoder|codestral|codellama/i.test(name)) return "coder";
+  return "general";
+}
+// prefer: more params, then more context (8k), then a full (non-lean) coder
+function coderScore(m) { return m.params * 100 + (/8k/i.test(m.name) ? 5 : 0) + (m.lean ? -1 : 0); }
+function indexModels(names) {
+  models = names.map(n => ({ name: n, params: parseParams(n), role: parseRole(n), lean: /lean/i.test(n) }));
+  const coders = models.filter(m => m.role === "coder").sort((a, b) => coderScore(b) - coderScore(a));
+  const reasoners = models.filter(m => m.role === "reasoner").sort((a, b) => b.params - a.params);
+  const generals = models.filter(m => m.role === "general").sort((a, b) => b.params - a.params);
+  bestCoder = (coders[0] || generals[0] || models[0] || {}).name || "";
+  bestReasoner = (reasoners[0] || {}).name || "";
+  fastest = [...models].sort((a, b) => a.params - b.params)[0]?.name || "";
+}
+// Route a prompt to the right brain + decide whether to plan first.
+// Key rule: once an app is on screen, treat requests as EDITS to it (the Lovable
+// model) — even ones containing build-ish words like "make" or "design" — unless
+// the user clearly asks to start fresh. A new app belongs in a new chat.
+function route(text) {
+  const t = text.toLowerCase();
+  const reasonRe = /\b(explain|why|how (does|do|to)|what (is|are|s)|compare|difference|pros and cons|analy|reason|architecture|should i|recommend|best way)\b/;
+  const hasBuildWord = /\b(build|make|create|add|change|page|app|component|section|button|form|design|style|colou?r|layout)\b/;
+  const newAppRe = /\b(start over|from scratch|scratch|rebuild|new (app|page|project|website|site|design|one|build)|different (app|page|thing)|instead build|build a new|another (app|page)|scrap (it|this))\b/;
+  const trivial = text.length < 28 && !/\b(with|that|and|including|plus|featuring|like)\b/i.test(t);
+  const hasApp = !!currentApp;
+  // a clear non-build question -> the reasoner answers (with or without an app)
+  if (reasonRe.test(t) && !hasBuildWord.test(t)) return { kind: "reason", model: bestReasoner || bestCoder, plan: false };
+  // app already on screen -> iterate on it (fast, no re-plan), unless they ask to start fresh
+  if (hasApp && !newAppRe.test(t)) return { kind: "edit", model: bestCoder, plan: false };
+  // no app yet (or an explicit new build) -> build; plan first unless it's a trivial one-liner
+  return { kind: "build", model: bestCoder, plan: !!bestReasoner && !trivial };
+}
+// human label for a model: "qwen2.5-coder · 14B · Coder"
+function roleTag(r) { return r === "coder" ? "Coder" : r === "reasoner" ? "Reasoner" : "General"; }
+function badgeFor(name) {
+  if (name === bestCoder) return "Best for building";
+  if (name === bestReasoner) return "Best for reasoning";
+  if (name === fastest && models.length > 1) return "Fastest";
+  return "";
+}
+function refreshPickerName() {
+  pickerName.textContent = autoMode ? "⚡ Auto" : currentModel;
+}
 
 /* ---------- model picker ---------- */
 async function loadModels() {
   try {
     const names = ((await (await fetch(API + "/api/tags")).json()).models || []).map(m => m.name).sort();
     if (!names.length) throw new Error("no models");
-    currentModel = names.find(n => /coder.*8k/i.test(n)) || names.find(n => /coder/i.test(n)) || names[0];
-    pickerName.textContent = currentModel;
-    menu.innerHTML = "";
-    for (const n of names) {
-      const li = document.createElement("li");
-      li.textContent = n; li.dataset.model = n;
-      if (n === currentModel) li.classList.add("sel");
-      li.addEventListener("click", () => { currentModel = n; pickerName.textContent = n; for (const x of menu.children) x.classList.toggle("sel", x.dataset.model === n); menu.hidden = true; });
-      menu.appendChild(li);
-    }
+    indexModels(names);
+    currentModel = bestCoder || names[0];   // fallback target when Auto resolves or is overridden
+    autoMode = true;
+    renderPicker();
+    refreshPickerName();
   } catch (e) {
     pickerName.textContent = "no models";
     dot.style.background = "#e74c3c"; dot.style.boxShadow = "0 0 8px #e74c3c";
     hint.textContent = "Can't reach Ollama at localhost:11434 - is it running? (try: ollama list)";
+  }
+}
+function renderPicker() {
+  menu.innerHTML = "";
+  // Auto option (default)
+  const auto = document.createElement("li");
+  auto.className = "auto" + (autoMode ? " sel" : "");
+  auto.innerHTML = '<div class="mtop">⚡ Auto <span class="mbadge">Recommended</span></div><div class="msub">Picks the best model for each request</div>';
+  auto.addEventListener("click", () => { autoMode = true; refreshPickerName(); renderPicker(); menu.hidden = true; });
+  menu.appendChild(auto);
+  const sep = document.createElement("li"); sep.className = "sep"; sep.textContent = "Or pick one"; menu.appendChild(sep);
+  // models ranked by capability
+  const ranked = [...models].sort((a, b) => (b.role === "coder") - (a.role === "coder") || b.params - a.params);
+  for (const m of ranked) {
+    const li = document.createElement("li");
+    li.className = "model" + (!autoMode && m.name === currentModel ? " sel" : "");
+    li.dataset.model = m.name;
+    const badge = badgeFor(m.name);
+    li.innerHTML = '<div class="mtop"><span class="mname"></span>' + (badge ? '<span class="mbadge">' + badge + '</span>' : '') + '</div><div class="msub">' + (m.params ? m.params + "B · " : "") + roleTag(m.role) + '</div>';
+    li.querySelector(".mname").textContent = m.name;
+    li.addEventListener("click", () => { autoMode = false; currentModel = m.name; refreshPickerName(); renderPicker(); menu.hidden = true; });
+    menu.appendChild(li);
   }
 }
 pickerBtn.addEventListener("click", e => { e.stopPropagation(); menu.hidden = !menu.hidden; });
@@ -571,20 +754,109 @@ async function detectAgent() {
 
 /* ---------- chat rendering ---------- */
 function escapeHtml(s) { return s.replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c])); }
+function mdInline(s) {
+  s = escapeHtml(s);
+  s = s.replace(/`([^`]+)`/g, "<code>$1</code>");
+  s = s.replace(/\*\*([^*]+?)\*\*/g, "<strong>$1</strong>");
+  s = s.replace(/(^|[^*])\*([^*\n]+?)\*(?!\*)/g, "$1<em>$2</em>");
+  s = s.replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+  return s;
+}
+// Markdown -> HTML for chat prose: headings, bullet/numbered lists, paragraphs,
+// inline bold/italic/code/links. A passthrough token (@@Bn@@) on its own line is
+// emitted raw, so pre-built blocks (app card, think aside) survive untouched.
+function renderMd(src) {
+  const lines = String(src).split("\n");
+  const out = []; let list = null, para = [];
+  const flushPara = () => { if (para.length) { out.push("<p>" + para.join("<br>") + "</p>"); para = []; } };
+  const closeList = () => { if (list) { out.push("</" + list + ">"); list = null; } };
+  for (const raw of lines) {
+    const line = raw.replace(/\s+$/, ""); let m;
+    if (/^@@B\d+@@$/.test(line.trim())) { flushPara(); closeList(); out.push(line.trim()); continue; }
+    if (!line.trim()) { flushPara(); closeList(); continue; }
+    if (/^\s*([-*_])(\s*\1){2,}\s*$/.test(line)) { flushPara(); closeList(); out.push("<hr>"); continue; }
+    if (m = line.match(/^\s*(#{1,6})\s+(.*)$/)) { flushPara(); closeList(); out.push('<div class="mdh mdh' + m[1].length + '">' + mdInline(m[2].replace(/\s*#+\s*$/, "")) + "</div>"); continue; }
+    if (m = line.match(/^\s*[-*+]\s+(.*)$/)) { flushPara(); if (list !== "ul") { closeList(); out.push("<ul>"); list = "ul"; } out.push("<li>" + mdInline(m[1]) + "</li>"); continue; }
+    if (m = line.match(/^\s*\d+[.)]\s+(.*)$/)) { flushPara(); if (list !== "ol") { closeList(); out.push("<ol>"); list = "ol"; } out.push("<li>" + mdInline(m[1]) + "</li>"); continue; }
+    closeList(); para.push(mdInline(line));
+  }
+  flushPara(); closeList();
+  return out.join("");
+}
 function render(text) {
-  // hide tool tags + full HTML apps from the bubble (they show in workspace panes)
-  let t = text.replace(/<run>[\s\S]*?<\/run>/gi, " RUNTOOL ").replace(/<write\s+path=[\s\S]*?<\/write>/gi, " WRITETOOL ");
-  t = t.replace(/```(?:html)?\s*[\s\S]*?```/gi, m => /<\/html>|<!doctype/i.test(m) ? " APP " : m);
-  let html = t.split(/(```[\s\S]*?```)/g).map(p => {
-    if (p.startsWith("```")) return "<pre><code>" + escapeHtml(p.replace(/^```[^\n]*\n?/, "").replace(/```$/, "")) + "</code></pre>";
-    let h = escapeHtml(p);
-    h = h.replace(/&lt;think&gt;([\s\S]*?)&lt;\/think&gt;/g, '<div class="think">$1</div>');
-    h = h.replace(/`([^`]+)`/g, "<code>$1</code>").replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
-    return h;
-  }).join("");
-  html = html.replace(/ APP /g, '<div class="codecard">&#9633; <b>App</b> &rarr; shown in the live preview</div>')
-             .replace(/ RUNTOOL /g, "").replace(/ WRITETOOL /g, "");
-  return html;
+  const blk = [];                                  // pre-built block HTML, passed through markdown untouched
+  const hold = h => "\n@@B" + (blk.push(h) - 1) + "@@\n";
+  text = String(text);
+  text = text.replace(/<think>([\s\S]*?)<\/think>/gi, (_, t) => hold('<div class="think">' + renderMd(t) + "</div>"));
+  text = text.replace(/<think>[\s\S]*$/i, "");                                   // unterminated think (streaming)
+  text = text.replace(/<run>[\s\S]*?<\/run>/gi, () => hold("")).replace(/<write\s+path=[\s\S]*?<\/write>/gi, () => hold(""));
+  text = text.replace(/```(?:html)?\s*[\s\S]*?```/gi, m => /<\/html>|<!doctype/i.test(m) ? hold('<div class="codecard">&#9633; <b>App</b> &rarr; shown in the live preview</div>') : m);
+  let html = text.split(/(```[\s\S]*?```)/g).map(p =>
+    p.startsWith("```") ? "<pre><code>" + escapeHtml(p.replace(/^```[^\n]*\n?/, "").replace(/```$/, "")) + "</code></pre>" : renderMd(p)
+  ).join("");
+  return html.replace(/@@B(\d+)@@/g, (_, i) => blk[+i]);
+}
+// While the model writes an HTML app, show ACTIVITY in the chat (not the raw
+// code) — the finished app lands in the Preview / Code panes, Claude-Code style.
+function parseStream(acc) {
+  const fence = acc.match(/```[ \t]*([a-zA-Z]*)[ \t]*\r?\n/);
+  if (!fence) return { prose: acc, code: null, complete: false };
+  const after = acc.slice(fence.index + fence[0].length);
+  const lang = (fence[1] || "").toLowerCase();
+  if (lang !== "html" && !/^\s*(<!doctype|<html|<head|<body)/i.test(after)) return { prose: acc, code: null, complete: false };
+  const close = after.indexOf("```");
+  return { prose: acc.slice(0, fence.index), code: (close >= 0 ? after.slice(0, close) : after), complete: close >= 0 };
+}
+// A traceable task list, Claude-Code style: each row is queued / active / done.
+function taskList(items) {
+  return '<div class="tasks">' + items.map(t =>
+    '<div class="tk tk-' + t.status + '"><span class="tki"></span><span>' + t.label +
+    (t.meta ? ' <span class="meta">' + t.meta + '</span>' : '') + '</span></div>'
+  ).join("") + "</div>";
+}
+// The "plan first" card: shows the reasoner planning, then the spec it produced
+// (collapsible), so you can see the thinking — honestly — before the build.
+function planCard(spec, status, modelName) {
+  if (status === "active") return taskList([{ status: "active", label: "Planning the build", meta: modelName || "" }]);
+  const open = (status === "open" || planOpen) ? " open" : "";
+  return '<details class="plan"' + open + '><summary><span class="tk tk-done"><span class="tki"></span><span>Planned the build</span></span><span class="planhint">view plan</span></summary><div class="planbody">' + render(spec) + '</div></details>';
+}
+// The build bubble's static prefix — regenerated LIVE each paint (not frozen) so
+// the plan card keeps its open/closed state across streaming repaints.
+function planPrefix() { return buildSpec ? planCard(buildSpec, "done") : ""; }
+function streamPrefix() { return planPrefix() + repairHtml; }
+// The two honest phases of an app build. Tense follows reality: "Writing…" while
+// the code streams, "Wrote" once the fence closes; "Rendering…" until the iframe
+// actually loads, only then "Rendered". The status — not the prose — is the truth.
+function buildTasks(lines, codeDone, previewDone) {
+  return taskList([
+    { status: codeDone ? "done" : "active",
+      label: codeDone ? "Wrote the app" : "Writing the app",
+      meta: lines + " lines" },
+    { status: previewDone ? "done" : (codeDone ? "active" : "queued"),
+      label: previewDone ? "Rendered the preview" : (codeDone ? "Rendering the preview" : "Render the preview") }
+  ]);
+}
+// Throttle streaming re-renders to ~1/66ms so the bubble doesn't reflow on every
+// token — that thrash is what made scrolling up jerk. The post-stream final paint
+// always runs, so nothing is lost by skipping intermediate frames.
+let _lastPaint = 0;
+function paintReady(force) { const n = performance.now(); if (!force && n - _lastPaint < 66) return false; _lastPaint = n; return true; }
+function displayStreaming(body, acc, sid) {
+  const p = parseStream(acc);
+  if (!paintReady(p.complete)) return;
+  if (p.code !== null) {
+    const n = p.code.replace(/\s+$/, "").split("\n").length;
+    body.innerHTML = streamPrefix() + render(p.prose) + buildTasks(n, p.complete, false);
+    if (sid === currentId) {                                          // only paint the shared panes for the ACTIVE project
+      codeview.textContent = p.code;                                  // stream the code into the Code pane, live
+      wsempty.classList.add("hidden"); wsbuild.classList.add("hidden");
+      if (!p.complete && !buildingApp) { buildingApp = true; showTab("code"); }   // jump to Code so you watch it write
+    }
+  } else {
+    body.innerHTML = streamPrefix() + render(acc);
+  }
+  scrollDown();
 }
 function addMsg(role, text) {
   empty.style.display = "none";
@@ -592,7 +864,7 @@ function addMsg(role, text) {
   w.className = "msg " + (role === "user" ? "user" : "bot");
   w.innerHTML = '<div class="who">' + (role === "user" ? "You" : "AI") + '</div><div class="body"></div>';
   w.querySelector(".body").innerHTML = render(text);
-  log.insertBefore(w, jump);
+  log.appendChild(w);
   scrollDown();
   return w.querySelector(".body");
 }
@@ -602,6 +874,9 @@ function atBottom() { return log.scrollHeight - log.scrollTop - log.clientHeight
 function scrollDown() { if (stick) log.scrollTop = log.scrollHeight; }
 log.addEventListener("scroll", () => { stick = atBottom(); jump.hidden = stick; });
 jump.addEventListener("click", () => { stick = true; log.scrollTop = log.scrollHeight; jump.hidden = true; });
+// keep the plan card's expanded state across streaming repaints (it gets rebuilt
+// each paint). Read happens pre-toggle, so the new state is !current.
+log.addEventListener("click", e => { const s = e.target.closest("details.plan > summary"); if (s) planOpen = !s.parentElement.open; });
 
 /* ---------- workspace ---------- */
 function extractApp(text) {
@@ -609,7 +884,96 @@ function extractApp(text) {
   for (let i = fences.length - 1; i >= 0; i--) if (/<\/html>|<!doctype|<body/i.test(fences[i])) return fences[i].trim();
   return null;
 }
-function setApp(code) { currentApp = code; preview.srcdoc = code; codeview.textContent = code; wsempty.classList.add("hidden"); dlBtn.disabled = false; showTab("preview"); }
+// Design system injected into every generated app: Tailwind + shadcn-style
+// tokens (light theme). The model writes Tailwind/shadcn classes; this makes
+// them actually render — so previews look strong (Lovable/v0-style), not blank.
+const DESIGN_HEAD = document.getElementById("designHead").innerHTML;
+// Same tokens + tailwind.config but WITHOUT the CDN <script> — used when the model
+// already added its own Tailwind CDN (so we supply the missing config, not a 2nd CDN).
+const DESIGN_CONFIG = DESIGN_HEAD.replace(/<script[^>]*cdn\.tailwindcss\.com[^>]*><\/script>/i, "");
+// Self-repair: the error-catcher injected into every preview + the channel that
+// collects what it reports. The status — errors or clean — drives the auto-fix.
+const ERR_HOOK = document.getElementById("errHook").innerHTML;
+let previewErrors = [];
+window.addEventListener("message", e => {
+  const d = e.data;
+  if (d && d.__llmbuilder === 1 && d.kind === "error" && typeof d.msg === "string" && previewErrors.length < 12) previewErrors.push(d.msg);
+});
+function instrument(html) {
+  if (!html) return html;
+  // inject FIRST (top of head) so the error handler is registered before any app script runs
+  if (/<head[^>]*>/i.test(html)) return html.replace(/<head([^>]*)>/i, "<head$1>" + ERR_HOOK);
+  if (/<html[^>]*>/i.test(html)) return html.replace(/(<html[^>]*>)/i, "$1<head>" + ERR_HOOK + "</head>");
+  return ERR_HOOK + html;
+}
+// Resolve with any runtime errors the preview threw. Resolves IMMEDIATELY once an
+// error appears (so the fix starts fast), otherwise after the clean-window post-load
+// — long enough to catch late async errors (e.g. a CDN lib loading then throwing).
+const SETTLE_MS = 2500;
+function previewSettled() {
+  return new Promise(resolve => {
+    let done = false, loadedAt = 0;
+    const t0 = Date.now();
+    const finish = () => { if (done) return; done = true; clearInterval(iv); resolve(previewErrors.slice()); };
+    preview.addEventListener("load", () => { loadedAt = Date.now(); }, { once: true });
+    const iv = setInterval(() => {
+      if (previewErrors.length) return finish();                       // an error surfaced -> repair now
+      if (loadedAt && Date.now() - loadedAt >= SETTLE_MS) return finish();   // loaded + clean window elapsed
+      if (Date.now() - t0 >= SETTLE_MS + 6000) return finish();        // safety: load never fired
+    }, 180);
+  });
+}
+function fixPrompt(errs) {
+  return "The web app you just generated threw a runtime error when it ran in the browser:\n\n" +
+    errs.slice(0, 3).map(e => "• " + e).join("\n") +
+    "\n\nFind and fix the bug, then output the COMPLETE corrected HTML file again in a single ```html code block. Keep everything that already worked — change only what's needed to fix the error.";
+}
+function repairSection(st) {
+  if (!st) return "";
+  const label = st.status === "done" ? "Fixed a runtime error"
+    : st.status === "fail" ? "Tried to fix — an error remains"
+    : "Caught an error — fixing";
+  return taskList([{ status: st.status === "active" ? "active" : st.status, label, meta: st.attempt ? "attempt " + st.attempt : "" }]);
+}
+function usesTailwind(code) {
+  return /class\s*=\s*["'][^"']*(?:\b(?:flex|grid|hidden|container)\b|(?:bg|text|p|px|py|pt|pb|m|mt|mb|mx|my|w|h|gap|rounded|shadow|border|items|justify|font|space|max|min)-)/i.test(code);
+}
+function injectDesign(code) {
+  if (!code) return code;
+  if (/border:\s*["']hsl\(var\(--border\)\)/.test(code)) return code;     // already has OUR tokens + config
+  const hasCDN = /cdn\.tailwindcss\.com/i.test(code);
+  if (!hasCDN && !usesTailwind(code)) return code;                        // plain app (e.g. a stopwatch) — render as-is
+  // The model used Tailwind (often with our token classes like bg-background) but
+  // without the config that DEFINES them -> inject it. Skip a 2nd CDN if it added one.
+  const head = hasCDN ? DESIGN_CONFIG : DESIGN_HEAD;
+  if (/<head[^>]*>/i.test(code)) return code.replace(/<head([^>]*)>/i, '<head$1>' + head);
+  if (/<html[^>]*>/i.test(code)) return code.replace(/(<html[^>]*>)/i, '$1<head>' + head + '</head>');
+  return '<!doctype html><html><head>' + head + '</head><body>' + code + '</body></html>';
+}
+// Render the app via a blob: URL (more reliable than srcdoc in a sandboxed iframe)
+// + a loading state. Returns nothing; manages overlays.
+let previewUrl = null;
+function showLoading(on) { wsload.classList.toggle("hidden", !on); }
+function loadPreview(html) {
+  wsempty.classList.add("hidden"); wsbuild.classList.add("hidden");
+  if (previewUrl) { URL.revokeObjectURL(previewUrl); previewUrl = null; }
+  preview.removeAttribute("srcdoc");
+  previewErrors = [];                                         // fresh error window for this render
+  if (!html) { preview.src = "about:blank"; wsempty.classList.remove("hidden"); showLoading(false); return; }
+  previewUrl = URL.createObjectURL(new Blob([instrument(html)], { type: "text/html" }));
+  showLoading(true);
+  preview.src = previewUrl;
+}
+preview.addEventListener("load", () => {
+  showLoading(false);
+  if (pendingBuild) {                                  // the preview has now truly rendered -> mark the build done
+    const { body, lines, prose } = pendingBuild; pendingBuild = null;
+    body.innerHTML = prose + buildTasks(lines, true, true);
+    scrollDown();
+  }
+});
+refreshBtn.addEventListener("click", () => { if (currentApp) { loadPreview(currentApp); showTab("preview"); } });
+function setApp(code) { currentApp = injectDesign(code); codeview.textContent = currentApp; dlBtn.disabled = false; loadPreview(currentApp); showTab("preview"); }
 function showTab(which) {
   for (const [t, n] of [[tabPreview, "preview"], [tabCode, "code"], [tabTerm, "term"]]) t.classList.toggle("on", n === which);
   preview.classList.toggle("hidden", which !== "preview");
@@ -626,22 +990,26 @@ function term(html) { termview.classList.remove("hidden"); termview.insertAdjace
 const STORE = "llmbuilder.chats.v1";
 function loadStore() { try { return JSON.parse(localStorage.getItem(STORE) || "[]"); } catch (e) { return []; } }
 function saveStore(a) { localStorage.setItem(STORE, JSON.stringify(a)); }
-function persist() {
-  if (!messages.length) return;
+// Persist a SPECIFIC session by id (not just the active one) so a build that
+// finishes while you've switched to another chat saves to ITS own project.
+function persistSession(id, msgs, app) {
+  if (!msgs.length) return;
   const a = loadStore();
-  const title = (messages.find(m => m.role === "user") || {}).content || "New chat";
-  const rec = { id: currentId, title: title.slice(0, 60), messages, app: currentApp, ts: Date.now() };
-  const i = a.findIndex(c => c.id === currentId);
+  const title = (msgs.find(m => m.role === "user") || {}).content || "New chat";
+  const rec = { id, title: title.slice(0, 60), messages: msgs, app, ts: Date.now() };
+  const i = a.findIndex(c => c.id === id);
   if (i >= 0) a[i] = rec; else a.unshift(rec);
   saveStore(a); renderList();
 }
+function persist() { persistSession(currentId, messages, currentApp); }
 function renderList() {
   const a = loadStore();
   chatlist.innerHTML = a.length ? "" : '<div class="empty2">No saved chats yet.</div>';
   for (const c of a) {
     const d = document.createElement("div");
     d.className = "item" + (c.id === currentId ? " on" : "");
-    d.innerHTML = '<span class="ttl"></span><span class="del" title="Delete">&times;</span>';
+    const building = buildingIds.has(c.id);
+    d.innerHTML = '<span class="ttl"></span>' + (building ? '<span class="sdot" title="Building&hellip;"></span>' : '') + '<span class="del" title="Delete">&times;</span>';
     d.querySelector(".ttl").textContent = c.title || "Untitled";
     d.querySelector(".ttl").addEventListener("click", () => openChat(c.id));
     d.querySelector(".del").addEventListener("click", e => { e.stopPropagation(); deleteChat(c.id); });
@@ -649,19 +1017,26 @@ function renderList() {
   }
 }
 function clearMessagesUI() { [...log.querySelectorAll(".msg")].forEach(n => n.remove()); }
+// Swap the ENTIRE workspace to a project's own state. Each chat is an
+// independent project: its own messages, app, preview, code + build state.
+function resetWorkspace() {
+  buildingApp = false; pendingBuild = null;
+  wsbuild.classList.add("hidden"); showLoading(false);
+  codeview.textContent = ""; termview.textContent = "";
+}
 function newChat() {
   currentId = newId(); messages = []; currentApp = "";
-  preview.srcdoc = ""; codeview.textContent = ""; termview.textContent = ""; dlBtn.disabled = true;
+  resetWorkspace(); loadPreview(""); dlBtn.disabled = true;
   wsempty.classList.remove("hidden"); showTab("preview");
   clearMessagesUI(); empty.style.display = ""; renderList(); input.focus();
 }
 function openChat(id) {
   const c = loadStore().find(x => x.id === id); if (!c) return;
-  currentId = id; messages = c.messages || []; currentApp = c.app || "";
+  currentId = id; messages = c.messages || []; currentApp = injectDesign(c.app || "");
+  resetWorkspace();
   clearMessagesUI(); empty.style.display = messages.length ? "none" : "";
   for (const m of messages) addMsg(m.role, m.content);
-  if (currentApp) { preview.srcdoc = currentApp; codeview.textContent = currentApp; wsempty.classList.add("hidden"); dlBtn.disabled = false; }
-  else { preview.srcdoc = ""; wsempty.classList.remove("hidden"); dlBtn.disabled = true; }
+  codeview.textContent = currentApp; dlBtn.disabled = !currentApp; loadPreview(currentApp);
   showTab("preview"); renderList(); stick = true; scrollDown();
 }
 function deleteChat(id) {
@@ -688,7 +1063,7 @@ function approvalCard(tool) {
     c.innerHTML = '<div class="who">&#9889;</div><div class="body"><div class="approve"><div class="lbl"></div><pre></pre><div class="btns"><button class="ok">Approve</button><button class="no">Skip</button></div></div></div>';
     c.querySelector(".lbl").textContent = label;
     c.querySelector("pre").textContent = codeTxt;
-    log.insertBefore(c, jump); scrollDown();
+    log.appendChild(c); scrollDown();
     const card = c.querySelector(".approve");
     c.querySelector(".ok").addEventListener("click", () => { card.classList.add("done"); resolve(true); });
     c.querySelector(".no").addEventListener("click", () => { card.classList.add("done"); resolve(false); });
@@ -714,10 +1089,13 @@ async function runTool(tool) {
 }
 
 /* ---------- the model call ---------- */
-async function callModel(onTok) {
-  const sys = agentChk.checked ? AGENT_SYSTEM : BUILDER_SYSTEM;
-  const resp = await fetch(API + "/api/chat", { method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ model: currentModel, stream: true, messages: [{ role: "system", content: sys }, ...messages] }) });
+async function callModel(onTok, signal, opts) {
+  opts = opts || {};
+  const sys = opts.system || (agentChk.checked ? AGENT_SYSTEM : BUILDER_SYSTEM);
+  const model = opts.model || currentModel;
+  const msgs = opts.messages || messages;
+  const resp = await fetch(API + "/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, signal,
+    body: JSON.stringify({ model, stream: true, messages: [{ role: "system", content: sys }, ...msgs] }) });
   const reader = resp.body.getReader(); const dec = new TextDecoder(); let buf = "", acc = "";
   while (true) {
     const { done, value } = await reader.read(); if (done) break;
@@ -728,38 +1106,145 @@ async function callModel(onTok) {
   return acc;
 }
 
+function setBusy(on) {
+  busy = on;
+  sendBtn.textContent = on ? "Stop" : "Send";
+  sendBtn.classList.toggle("stop", on);
+}
+function stopGen() { if (abortCtl) abortCtl.abort(); }
+
+// deepseek-r1 & friends emit <think>…</think> before the answer — keep only the answer.
+function stripThink(s) {
+  if (/<\/think>/i.test(s)) return s.replace(/[\s\S]*?<\/think>/i, "");
+  return s.replace(/<think>/i, "");
+}
+
 async function send() {
   const text = input.value.trim();
   if (!text || busy || !currentModel) return;
-  busy = true; sendBtn.disabled = true; input.value = ""; input.style.height = "auto"; stick = true;
-  addMsg("user", text); messages.push({ role: "user", content: text });
+  const sid = currentId;                 // this generation belongs to THIS project, even if you switch away
+  const sessionMessages = messages;      // keeps pointing at this project's history after a switch
+  let sessionApp = currentApp;
+  setBusy(true); input.value = ""; input.style.height = "auto"; stick = true;
+  buildingIds.add(sid); renderList();
+  addMsg("user", text); sessionMessages.push({ role: "user", content: text });
+  abortCtl = new AbortController();
+  buildSpec = ""; repairHtml = ""; buildingApp = false; _lastPaint = 0; planOpen = false;
+  let body = null;
+  // ---- route: which brain, and do we plan first? ----
+  const agentRun = agentChk.checked && agentReady;
+  const r = (autoMode && !agentRun)
+    ? route(text)
+    : { kind: agentRun ? "agent" : (currentApp ? "edit" : "build"), model: currentModel || bestCoder, plan: false };
   try {
-    let steps = 0;
-    while (steps++ < 12) {
-      const body = addMsg("assistant", "");
-      const acc = await callModel(t => { body.innerHTML = render(t); scrollDown(); });
-      messages.push({ role: "assistant", content: acc });
-      // builder mode: render any app
-      const app = extractApp(acc); if (app) setApp(app);
-      // agent mode: handle a tool call (with approval), then loop
-      if (agentChk.checked && agentReady) {
+    if (agentRun) {
+      // ---- agent mode: multi-step approve-to-run tool loop ----
+      let steps = 0;
+      while (steps++ < 12) {
+        body = addMsg("assistant", "");
+        const acc = await callModel(t => displayStreaming(body, t, sid), abortCtl.signal, { model: r.model });
+        sessionMessages.push({ role: "assistant", content: acc });
+        body.innerHTML = render(acc);
         const tool = findToolCall(acc);
         if (tool) {
           const ok = await approvalCard(tool);
           const result = ok ? await runTool(tool) : "skipped by user";
-          messages.push({ role: "user", content: "<result>\n" + result + "\n</result>" });
+          sessionMessages.push({ role: "user", content: "<result>\n" + result + "\n</result>" });
           continue;
         }
+        break;
       }
-      break;
+    } else if (r.kind === "reason") {
+      // ---- reasoning / Q&A: the reasoner, plain answer (no app) ----
+      body = addMsg("assistant", "");
+      const acc = await callModel(t => { if (!paintReady(false)) return; body.innerHTML = render(stripThink(t)); scrollDown(); }, abortCtl.signal,
+        { model: r.model, system: "You are a helpful, concise engineering assistant running locally on the user's machine." });
+      sessionMessages.push({ role: "assistant", content: acc });
+      body.innerHTML = render(stripThink(acc));
+    } else {
+      // ---- build / edit ----
+      let spec = "";
+      // L1 — plan first: the reasoner turns a short ask into a concrete spec the coder builds to
+      if (r.plan && bestReasoner) {
+        body = addMsg("assistant", "");
+        body.innerHTML = planCard("", "active", bestReasoner);
+        if (sid === currentId) showTab("code");
+        const planText = await callModel(() => {}, abortCtl.signal,
+          { model: bestReasoner, system: SPEC_SYSTEM, messages: [{ role: "user", content: text }] });
+        spec = stripThink(planText).trim();
+        buildSpec = spec;
+        body.innerHTML = streamPrefix() + buildTasks(0, false, false);
+        scrollDown();
+      }
+      // L?: the coder writes the app (to the spec if we have one)
+      if (!body) body = addMsg("assistant", "");
+      // For an edit, give the coder JUST the current app + the instruction (focused,
+      // small context) and force a full-file rewrite — small models love to reply
+      // with a snippet or an explanation otherwise.
+      let sys, callMsgs;
+      if (r.kind === "edit" && currentApp) {
+        const lastApp = [...sessionMessages].reverse().find(m => m.role === "assistant" && extractApp(m.content));
+        sys = BUILDER_SYSTEM + "\n\nThis is an EDIT to the app you built earlier (shown above). Output the COMPLETE updated HTML file in ONE ```html block — never a snippet, a diff, or only an explanation. Keep everything that already works; change only what is asked.";
+        callMsgs = lastApp
+          ? [{ role: "user", content: "Here is the current app:" }, { role: "assistant", content: lastApp.content }, { role: "user", content: text }]
+          : undefined;
+      } else {
+        sys = spec ? (BUILDER_SYSTEM + "\n\nBuild to THIS spec — implement every point:\n" + spec) : BUILDER_SYSTEM;
+      }
+      const acc = await callModel(t => displayStreaming(body, t, sid), abortCtl.signal, { model: r.model, system: sys, messages: callMsgs });
+      sessionMessages.push({ role: "assistant", content: acc });
+      const app = extractApp(acc);
+      if (app) {
+        const prose = render(acc.replace(/```(?:html)?\s*[\s\S]*?```/gi, "").trim());
+        let curLines = app.replace(/\s+$/, "").split("\n").length;
+        sessionApp = injectDesign(app);
+        if (sid !== currentId) {
+          body.innerHTML = planPrefix() + prose + buildTasks(curLines, true, true);   // background: artifact exists
+        } else {
+          body.innerHTML = planPrefix() + prose + buildTasks(curLines, true, false);  // "Rendering the preview…"
+          setApp(app);
+          let errs = await previewSettled();                     // wait for the real render, collect any errors
+          body.innerHTML = planPrefix() + prose + buildTasks(curLines, true, true);   // "Rendered"
+          // L2 — self-repair: if it threw at runtime, fix it silently (up to 2 rounds)
+          let st = null, attempt = 0;
+          while (errs.length && attempt < 2 && sid === currentId) {
+            attempt++;
+            st = { status: "active", attempt }; repairHtml = repairSection(st);
+            body.innerHTML = planPrefix() + repairHtml + prose + buildTasks(curLines, true, true);
+            showTab("code"); scrollDown();
+            const fixMsgs = sessionMessages.concat([{ role: "user", content: fixPrompt(errs) }]);
+            const facc = await callModel(t => displayStreaming(body, t, sid), abortCtl.signal, { model: r.model, system: BUILDER_SYSTEM, messages: fixMsgs });
+            const fapp = extractApp(facc);
+            if (!fapp) { st = { status: "fail", attempt }; break; }
+            sessionMessages[sessionMessages.length - 1] = { role: "assistant", content: facc };   // replace broken app w/ fixed
+            curLines = fapp.replace(/\s+$/, "").split("\n").length;
+            sessionApp = injectDesign(fapp);
+            repairHtml = repairSection(st);
+            body.innerHTML = planPrefix() + repairHtml + prose + buildTasks(curLines, true, false);
+            setApp(fapp);
+            errs = await previewSettled();
+          }
+          if (st) {
+            st = { status: errs.length ? "fail" : "done", attempt: st.attempt }; repairHtml = repairSection(st);
+            body.innerHTML = planPrefix() + repairHtml + prose + buildTasks(curLines, true, true);
+            scrollDown();
+          }
+        }
+      } else {
+        body.innerHTML = streamPrefix() + render(acc);              // answered without an app
+      }
     }
   } catch (e) {
-    addMsg("assistant", "Error: " + e.message);
+    if (e.name === "AbortError") { if (body) body.innerHTML = '<div class="codecard">Stopped.</div>'; else addMsg("assistant", "Stopped."); }
+    else { if (body) body.innerHTML = '<div class="codecard">Error: ' + escapeHtml(e.message) + '</div>'; else addMsg("assistant", "Error: " + e.message); }
   } finally {
-    busy = false; sendBtn.disabled = false; input.focus(); persist();
+    abortCtl = null; setBusy(false); buildSpec = ""; repairHtml = "";
+    buildingIds.delete(sid);
+    persistSession(sid, sessionMessages, sessionApp);
+    if (sid === currentId) input.focus();
   }
 }
-sendBtn.addEventListener("click", send);
+sendBtn.addEventListener("click", () => busy ? stopGen() : send());
 input.addEventListener("keydown", e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } });
 input.addEventListener("input", () => { input.style.height = "auto"; input.style.height = Math.min(input.scrollHeight, 160) + "px"; });
 document.querySelectorAll(".empty .ex span").forEach(s => s.addEventListener("click", () => { input.value = s.dataset.ex; send(); }));
@@ -837,6 +1322,7 @@ class H(BaseHTTPRequestHandler):
             data = open(fp, "rb").read()
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Cache-Control", "no-store, must-revalidate")
             self.send_header("Content-Length", str(len(data)))
             self.end_headers(); self.wfile.write(data)
         else:

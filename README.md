@@ -47,7 +47,9 @@ Cloud AI tools can change their rules overnight. Running a capable model on your
 
 **Find your machine below and jump straight to its one command — that's the whole setup.**
 
-### ➡️ &nbsp; [🍎 macOS / 🐧 Linux](#-macos--linux) &nbsp;·&nbsp; [🪟 Windows](#-windows)
+### ➡️ &nbsp; [🍎 macOS / 🐧 Linux](#-macos--linux) &nbsp;·&nbsp; [🪟 Windows ⚠️ *experimental*](#-windows)
+
+> **macOS / Linux is the tested, primary path.** The Windows one-command exists but is **⚠️ experimental — not yet tested on a real Windows machine** (see the note in the [Windows section](#-windows) below).
 
 > These commands run in your computer's built-in command app (**Terminal** on Mac/Linux, **PowerShell** on Windows) — **not** in a web browser, ChatGPT, Claude, or an IDE search box. Each section below tells you exactly which app to open and where to find it.
 
@@ -126,7 +128,9 @@ Nothing is hidden and nothing is destructive. Every install asks for confirmatio
 
 ## 🪟 Windows
 
-Windows has its own one command, [`local-llm-setup.ps1`](local-llm-setup.ps1). It runs Ollama **natively**, so your GPU is used for real — no WSL, no virtual machine.
+> ⚠️ **Experimental — not yet tested on a real Windows machine.** The PowerShell installer is provided as-is; please [report issues](https://github.com/hamza-ali-shahjahan/local-llm-setup/issues). The macOS / Linux path above is the tested, primary one — if you're on Windows and something breaks, your reports are what will make this path solid.
+
+Windows has its own one command, [`local-llm-setup.ps1`](local-llm-setup.ps1). It's **designed to** run Ollama **natively**, so your GPU is used for real — no WSL, no virtual machine.
 
 ### The one command
 

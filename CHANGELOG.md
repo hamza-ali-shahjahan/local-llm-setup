@@ -4,6 +4,47 @@ All notable changes to this project are documented here. Format based on
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/); this project aims to
 follow [Semantic Versioning](https://semver.org/).
 
+## [1.5.0] — 2026-06-17
+
+Makes the builder feel like a real tool, not a toy — it **plans before it builds**,
+**picks its own model**, **fixes its own mistakes**, and shows you the work the way
+Claude Code does. The honest trade-off (local models are weaker than frontier) is
+handled by harness taste, not by hoping the model is smart.
+
+### Added
+- **Auto model routing.** A new **⚡ Auto** mode (default) picks the best model for
+  each request — a coder to build, a reasoner to explain — so you never have to choose.
+  The picker is now an override, with models **ranked + badged** by capability and role
+  ("Best for building", "Reasoner", "Fastest").
+- **Plan-first builds.** For a non-trivial build, a reasoner first writes a short, concrete
+  **spec**, then the coder builds to it — shown as a collapsible "view plan" card. A rich
+  spec is what stops a small model needing hand-holding.
+- **Self-repair.** Every preview reports its own runtime errors; the builder **auto-fixes
+  them** (up to two silent rounds) before handing it to you.
+- **Traceable task tracker.** Activity shows in the chat as honest **queued → in-progress →
+  done** steps (never "done" while still working); the **code streams live** into the Code
+  pane as it's written.
+- **Per-project isolation.** Each chat is its own project — its own preview, code and build
+  state. A build in one no longer bleeds into another; a background build shows a status dot.
+- **Markdown in chat** — headings, lists, bold/italic/code/links now render (no more raw `###`).
+
+### Changed
+- **Composer redesign** — one clean input, a **Stop** button while generating, comfortable hit
+  area, clearer hint.
+- **Stronger design system** — dark-theme tokens; the Tailwind + shadcn config is now injected
+  even when the model adds its *own* Tailwind CDN (a common cause of blank previews); hero/section
+  layout guidance so backgrounds don't collapse.
+- **Preview** renders via a blob URL with a **Refresh** button and a loading state.
+
+### Fixed
+- Blank previews when the model used design tokens without loading the config.
+- Scroll jank while streaming (re-renders are throttled) and the misplaced "jump to latest" button.
+- The "view plan" card collapsing on its own mid-build.
+
+### Internal
+- `tools/bake.py` — a marker-driven, byte-verified baker that splices the dogfooded builder into
+  both installer scripts, so the embedded copies can never drift again.
+
 ## [1.4.0] — 2026-06-14
 
 Turns `--chat` into a local **app builder** (Lovable / Bolt-style) and adds an
