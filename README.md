@@ -37,51 +37,38 @@ This collapses all of it into **one command that asks you nothing it can figure 
 
 **12 steps and 5+ judgment calls → 1 command, 0 required decisions.** Built for someone doing this for the very first time — no prior knowledge assumed.
 
----
-
 ## Why
 
 Cloud AI tools can change their rules overnight. Running a capable model on your own machine is cheap insurance — and these days a modern Mac, Linux, or Windows box runs genuinely useful models locally. The hard part has always been the first 30 minutes of setup. This removes them.
 
-## What it does
+---
 
-```
-==> Checking your machine
-✓ Platform: mac
-✓ Chip: Apple M5 Pro
-✓ Memory: 24 GB
+## Quick Start
 
-==> Recommended setup
-  Tier:     14b  (sized to your 24 GB of memory)
-  Models:   qwen2.5-coder:14b deepseek-r1:14b
-  Context:  8192 tokens  (keeps memory use sane)
-  Download: ~19 GB  (you have 669 GB free)
-```
+**Find your machine below and jump straight to its one command — that's the whole setup.**
 
-It then checks you have the disk space, installs Ollama, pulls those models, bakes the context window into ready-to-use `*-8k` variants, runs a live smoke test, and offers to open a browser chat + set up your editor. On a Linux or Windows box with an NVIDIA GPU you'll also see a `✓ GPU:` line, and the tier is sized to your VRAM instead.
+### ➡️ &nbsp; [🍎 macOS / 🐧 Linux](#-macos--linux) &nbsp;·&nbsp; [🪟 Windows](#-windows)
 
-## Quickstart
+> These commands run in your computer's built-in command app (**Terminal** on Mac/Linux, **PowerShell** on Windows) — **not** in a web browser, ChatGPT, Claude, or an IDE search box. Each section below tells you exactly which app to open and where to find it.
 
-**Find your machine below, open the app it names, and paste the one command.** That's the whole setup — it downloads the script and runs it. No prior command-line experience needed.
+---
 
-> These commands run in your computer's built-in command app (Terminal or PowerShell) — **not** in a web browser, ChatGPT, Claude, or an IDE search box. The steps below tell you exactly which app to open and where to find it.
+## 🍎🐧 macOS / Linux
 
-### 🍎 Mac &nbsp;·&nbsp; 🐧 Linux
+### The one command
 
-**1. Open the Terminal.**
-
-- **Mac:** press **⌘ Command + Spacebar**, type **`Terminal`**, press **Return**.
-- **Linux:** open your apps menu and search **`Terminal`** (on most desktops **Ctrl + Alt + T** opens it directly).
-
-A window opens with a prompt ending in `%` or `$` and a blinking cursor — that's it waiting for you.
-
-**2. Paste this one command and press Return.**
+Paste this into your **Terminal** and press Return. It downloads the script next to you and runs it — checking your machine, installing the runtime, pulling the right model, and smoke-testing it. **It asks before installing anything.**
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/hamza-ali-shahjahan/local-llm-setup/main/local-llm-setup.sh -o local-llm-setup.sh && bash local-llm-setup.sh
 ```
 
-To paste: **⌘ Command + V** (Mac) or **Ctrl + Shift + V** (Linux). It downloads the script next to you and runs it — checking your machine, installing the runtime, pulling the right model, and smoke-testing it. It asks before installing anything.
+**New to the Terminal? Here's how to open it:**
+
+- **Mac:** press **⌘ Command + Spacebar**, type **`Terminal`**, press **Return**.
+- **Linux:** open your apps menu and search **`Terminal`** (on most desktops **Ctrl + Alt + T** opens it directly).
+
+A window opens with a prompt ending in `%` or `$` and a blinking cursor — that's it waiting for you. To paste the command: **⌘ Command + V** (Mac) or **Ctrl + Shift + V** (Linux), then press Return.
 
 <details>
 <summary><b>Rather see the full plan first, without changing anything?</b></summary>
@@ -108,21 +95,50 @@ bash local-llm-setup.sh
 ```
 </details>
 
-### 🪟 Windows &nbsp;<sub>(native — no WSL needed)</sub>
+### What it does
+
+```
+==> Checking your machine
+✓ Platform: mac
+✓ Chip: Apple M5 Pro
+✓ Memory: 24 GB
+
+==> Recommended setup
+  Tier:     14b  (sized to your 24 GB of memory)
+  Models:   qwen2.5-coder:14b deepseek-r1:14b
+  Context:  8192 tokens  (keeps memory use sane)
+  Download: ~19 GB  (you have 669 GB free)
+```
+
+It then checks you have the disk space, installs Ollama, pulls those models, bakes the context window into ready-to-use `*-8k` variants, runs a live smoke test, and offers to open a browser chat + set up your editor. On a Linux box with an NVIDIA GPU you'll also see a `✓ GPU:` line, and the tier is sized to your VRAM instead.
+
+### What it installs
+
+| Component | What it is | Why |
+| --- | --- | --- |
+| [Homebrew](https://brew.sh) | Mac package manager | **macOS only**, and only if you don't have it (asks first) |
+| [Ollama](https://ollama.com) | Local model runtime | Runs the models. Installed via Homebrew (macOS) or the official `ollama.com/install.sh` (Linux) |
+| 1–2 models | Coder + reasoning | Chosen automatically from your hardware |
+
+Nothing is hidden and nothing is destructive. Every install asks for confirmation; `--dry-run` shows the full plan without touching your system.
+
+---
+
+## 🪟 Windows
 
 Windows has its own one command, [`local-llm-setup.ps1`](local-llm-setup.ps1). It runs Ollama **natively**, so your GPU is used for real — no WSL, no virtual machine.
 
-**1. Open PowerShell.**
+### The one command
 
-Click **Start**, type **`PowerShell`**, and click **Windows PowerShell**. A blue window opens with a prompt ending in `>`.
-
-**2. Paste this one command and press Enter.**
+Paste this into **PowerShell** and press Enter. It downloads the script, allows it to run **for this window only** (Windows blocks downloaded scripts by default), and runs it. **It asks before installing anything.**
 
 ```powershell
 Invoke-WebRequest -Uri https://raw.githubusercontent.com/hamza-ali-shahjahan/local-llm-setup/main/local-llm-setup.ps1 -OutFile local-llm-setup.ps1; Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force; .\local-llm-setup.ps1
 ```
 
-To paste: **Ctrl + V** (or right-click the window). This downloads the script, allows it to run **for this window only** (Windows blocks downloaded scripts by default), and runs it. It asks before installing anything.
+**New to PowerShell? Here's how to open it:**
+
+Click **Start**, type **`PowerShell`**, and click **Windows PowerShell**. A blue window opens with a prompt ending in `>`. To paste the command: **Ctrl + V** (or right-click the window), then press Enter.
 
 > If `winget` isn't on your machine, the script downloads the official Ollama installer instead and runs it for you — either way you don't have to find anything yourself.
 
@@ -150,17 +166,37 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 ```
 </details>
 
-> **Got an NVIDIA GPU?** The script sizes the model to your VRAM and runs Ollama natively. To confirm it's really using the GPU, follow [docs/verify-windows-gpu.md](docs/verify-windows-gpu.md) — a ~5-minute check.
+### What it does
 
-## What it installs
+```
+==> Checking your machine
+[ok] Platform: windows
+[ok] Chip: AMD Ryzen 7 7800X3D
+[ok] Memory: 32 GB
+[ok] GPU: NVIDIA GeForce RTX 4070 (12 GB VRAM)
+
+==> Recommended setup
+  Tier:     14b  (sized to your 12 GB GPU — the fast path)
+  Models:   qwen2.5-coder:14b deepseek-r1:14b
+  Context:  8192 tokens  (keeps memory use sane)
+  Download: ~19 GB  (you have 400 GB free)
+```
+
+It then checks you have the disk space, installs Ollama **natively** (via `winget`, or the official installer if `winget` isn't present), starts the Ollama service on `localhost:11434`, pulls those models, bakes the context window into ready-to-use `*-8k` variants, runs a live smoke test, and offers to open a browser chat + set up your editor. With a discrete NVIDIA GPU you'll see a `[ok] GPU:` line (detected via `nvidia-smi`), the GPU is used for real — no WSL — and the tier is sized to your VRAM instead of system RAM.
+
+### What it installs
 
 | Component | What it is | Why |
 | --- | --- | --- |
-| [Homebrew](https://brew.sh) | Mac package manager | **macOS only**, and only if you don't have it (asks first) |
-| [Ollama](https://ollama.com) | Local model runtime | Runs the models. Installed via Homebrew (macOS), the official `ollama.com/install.sh` (Linux), or `winget` / the official installer (Windows) |
-| 1–2 models | Coder + reasoning | Chosen automatically from your hardware |
+| [Ollama](https://ollama.com) | Local model runtime | Runs the models **natively** via `winget` (`Ollama.Ollama`), or the official `OllamaSetup.exe` from ollama.com if `winget` is absent. No WSL — your GPU is used for real |
+| 1–2 models | Coder + reasoning | Chosen automatically from your hardware (VRAM if you have an NVIDIA GPU, else RAM) |
+| `*-8k` context variants | Ready-to-use models | Baked locally with `ollama create` so the context window is pre-set |
 
-Nothing is hidden and nothing is destructive. Every install asks for confirmation; `--dry-run` (or `-DryRun` on Windows) shows the full plan without touching your system.
+Nothing is hidden and nothing is destructive. Every install asks for confirmation; `-DryRun` shows the full plan without touching your system. (Python is **not** installed — it's optional, and only used to auto-serve the browser chat and the `-Agent` tools if you already have it.)
+
+> **Got an NVIDIA GPU?** To confirm it's really using the GPU, follow [docs/verify-windows-gpu.md](docs/verify-windows-gpu.md) — a ~5-minute check.
+
+---
 
 ## How models are matched to your machine
 
@@ -267,3 +303,5 @@ Model tags age as new releases ship. PRs that bump the tier list are welcome —
 ## License
 
 [MIT](LICENSE) © Hamza Ali Shahjahan
+</content>
+</invoke>
