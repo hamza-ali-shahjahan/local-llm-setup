@@ -188,8 +188,9 @@ macOS / Linux use `--flag`; Windows PowerShell uses `-Flag`. Same behavior eithe
 | `--yes`, `-y` | `-Yes` | Accept all defaults, no prompts (unattended) |
 | `--tier <t>` | `-Tier <t>` | Force a model tier (`7b`, `14b`, `32b`, `70b`) |
 | `--lean` | `-Lean` | Also bake a minimal-code "ponytail" coder variant (see below) |
-| `--chat` | `-Chat` | Open a local chat in your browser (no extra installs) |
+| `--chat` | `-Chat` | Open the local app **builder** in your browser (chat + live preview) |
 | `--editor` | `-Editor` | Set up Continue in VS Code / Cursor for your local models |
+| `--agent` | `-Agent` | Builder **+ approve-to-run tools** (runs commands you OK; opt-in, needs Python) |
 | `--benchmark` | `-Benchmark` | Measure tokens/sec for every installed model |
 | `--uninstall` | `-Uninstall` | Remove the models this tool installs (asks first) |
 | `--platform <os>` | — | Override OS auto-detect (`mac`, `linux`) |
@@ -208,17 +209,17 @@ ollama run qwen2.5-coder-14b-lean     # the minimal-code coder
 
 The system prompt is adapted from [ponytail](https://github.com/DietrichGebert/ponytail) (MIT) — *"the best code is the code you never wrote."*
 
-## Use it: a chat window and your editor
+## Use it: a builder, your editor, and (optionally) tools
 
-Running the model is only half of "useful". When setup finishes it **offers to do both of these for you** — or run them anytime:
+Running the model is only half of "useful". When setup finishes it **offers to set these up for you** — or run them anytime.
 
-**💬 Chat in your browser** — a ChatGPT-style window, no Docker and nothing extra to install:
+**💬 Build apps in your browser** — a local, Lovable-style **app builder**: chat on the left, a **live preview** on the right.
 
 ```bash
 ./local-llm-setup.sh --chat          # -Chat on Windows
 ```
 
-It writes a self-contained chat page and serves it from `localhost` — which Ollama allows by default, so your model is reachable from the page but **not** exposed to the wider web. Model picker, streaming replies, code blocks.
+Ask it to *"build me a stopwatch"* and it renders + runs in a sandboxed iframe (with a **Code** tab + **Download**). It works with **any code-writing model** — a builder prompt makes the model emit one self-contained HTML file. Also: a **history sidebar** (past builds) and Claude-Code-style scroll (scroll up mid-generation without getting yanked down). Served from `localhost`, which Ollama allows by default, so the page can reach your model but Ollama is **not** exposed to the web.
 
 **🧩 AI inside your editor** — installs [Continue](https://continue.dev) in VS Code / Cursor and points it at your local models:
 
@@ -227,6 +228,14 @@ It writes a self-contained chat page and serves it from `localhost` — which Ol
 ```
 
 Then open your editor → the Continue icon in the sidebar → pick a "(local)" model. Chat, edit, and "apply" all run on your machine.
+
+**🤖 Agent mode (opt-in)** — adds **real, approve-to-run tools**: the model can run shell commands and write files, so it can build multi-file things, not just single-page apps.
+
+```bash
+./local-llm-setup.sh --agent         # -Agent on Windows  (needs Python)
+```
+
+Every action waits for you to click **Approve**, and everything happens inside a workspace folder (`~/.local-llm-setup/workspace`), on `localhost` only. It's **off by default and consented** because an approved command runs with your full permissions — see the safety notes in [CHANGELOG.md](CHANGELOG.md).
 
 ## After setup
 

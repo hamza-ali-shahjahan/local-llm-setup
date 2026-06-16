@@ -4,6 +4,32 @@ All notable changes to this project are documented here. Format based on
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/); this project aims to
 follow [Semantic Versioning](https://semver.org/).
 
+## [1.4.0] — 2026-06-14
+
+Turns `--chat` into a local **app builder** (Lovable / Bolt-style) and adds an
+opt-in **agent** mode with real, approve-to-run tools.
+
+### Added
+- **Builder + live preview.** `--chat` / `-Chat` is now a split view: chat on the
+  left, a **live preview** on the right. Ask it to build a web app (a stopwatch, a
+  to-do list) and it renders + runs in a sandboxed iframe — plus a **Code** tab and
+  **Download**. A builder system prompt makes the model emit one self-contained HTML
+  file, so it works with **any code-writing model** (no function-calling required).
+- **Chat history sidebar** — past builds saved to `localStorage`; click to revisit.
+- **Claude-Code-style scroll** — sticks to the bottom only when you're already there,
+  so you can scroll up mid-generation (with a "jump to latest" button).
+- **`--agent` / `-Agent` (opt-in, consented).** Launches a tiny local **tool server**
+  (Python) so the model can **run shell commands and write files** — but only inside a
+  workspace folder (`~/.local-llm-setup/workspace`), bound to `127.0.0.1`, CORS-locked
+  to the page, and **only after you click Approve** for each action (output shown in a
+  Terminal tab). Off by default; needs Python.
+
+### Security
+- The agent tool server binds only to `127.0.0.1`, rejects requests from any other web
+  origin (a website you visit can't drive it), confines file writes to the workspace,
+  and times commands out at 30s. Approval is per-command — that's the guardrail (an
+  *approved* command still runs unrestricted), which is exactly why agent mode is opt-in.
+
 ## [1.3.0] — 2026-06-14
 
 The "zero to *useful* in one command" release. After the model is running, the
@@ -141,6 +167,7 @@ First public release.
 - Full community profile: README, MIT license, CONTRIBUTING, CODE_OF_CONDUCT,
   SECURITY, issue + PR templates.
 
+[1.4.0]: https://github.com/hamza-ali-shahjahan/local-llm-setup/releases/tag/v1.4.0
 [1.3.0]: https://github.com/hamza-ali-shahjahan/local-llm-setup/releases/tag/v1.3.0
 [1.2.0]: https://github.com/hamza-ali-shahjahan/local-llm-setup/releases/tag/v1.2.0
 [1.1.1]: https://github.com/hamza-ali-shahjahan/local-llm-setup/releases/tag/v1.1.1

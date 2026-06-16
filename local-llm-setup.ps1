@@ -20,6 +20,7 @@ Usage (PowerShell):
   .\local-llm-setup.ps1 -Lean           # also bake a minimal-code "ponytail" coder variant
   .\local-llm-setup.ps1 -Chat           # open a local chat in your browser (no extra installs)
   .\local-llm-setup.ps1 -Editor         # set up Continue in VS Code / Cursor for your local models
+  .\local-llm-setup.ps1 -Agent          # builder + approve-to-run tools (runs commands you OK)
   .\local-llm-setup.ps1 -Benchmark      # measure tokens/sec for installed models
   .\local-llm-setup.ps1 -Uninstall      # remove the models this tool installs
   .\local-llm-setup.ps1 -Version        # print the version and exit
@@ -37,17 +38,19 @@ param(
   [switch]$Lean,
   [switch]$Chat,
   [switch]$Editor,
+  [switch]$Agent,
   [switch]$Benchmark,
   [switch]$Uninstall,
   [switch]$Version,
   [switch]$Help
 )
 
-$AppVersion = '1.3.0'   # NB: not $Version — that name is the -Version switch param
+$AppVersion = '1.4.0'   # NB: not $Version — that name is the -Version switch param
 $Ctx = 8192             # default context window — big enough for real work, light on RAM
 $HomeDir = if ($env:USERPROFILE) { $env:USERPROFILE } else { $HOME }
 $ChatDir = Join-Path $HomeDir '.local-llm-setup\chat'   # where the chat page is written
 $ChatPort = 8765                                         # localhost port the chat page is served on
+$AgentPy = Join-Path $HomeDir '.local-llm-setup\agent-server.py'   # the optional -Agent tool server
 
 # Name of the context-tuned variant for a model tag (the size is kept in the
 # name so a later run at a different tier won't overwrite an earlier one):
@@ -308,188 +311,427 @@ function Write-ChatHtml {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Local LLM Chat</title>
+<title>Local LLM Builder</title>
 <style>
   :root { color-scheme: dark; }
   * { box-sizing: border-box; }
-  body {
-    margin: 0; height: 100vh; display: flex; flex-direction: column;
-    font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    background: #0d1017; color: #e6e6e6;
-  }
-  header {
-    display: flex; align-items: center; gap: 12px;
-    padding: 12px 18px; border-bottom: 1px solid #1e2430; background: #11151d;
-  }
-  header h1 { font-size: 15px; margin: 0; font-weight: 600; color: #cfe3ff; }
-  header .dot { width: 8px; height: 8px; border-radius: 50%; background: #2ecc71; box-shadow: 0 0 8px #2ecc71; }
-  select {
-    margin-left: auto; background: #0d1017; color: #e6e6e6;
-    border: 1px solid #2a3140; border-radius: 8px; padding: 6px 10px; font-size: 13px;
-  }
-  #log { flex: 1; overflow-y: auto; padding: 24px 0; }
-  .wrap { max-width: 760px; margin: 0 auto; padding: 0 18px; }
-  .msg { display: flex; gap: 12px; margin: 0 0 22px; }
-  .msg .who {
-    flex: none; width: 30px; height: 30px; border-radius: 7px; font-size: 13px;
-    display: flex; align-items: center; justify-content: center; font-weight: 700;
-  }
+  html, body { height: 100%; }
+  body { margin: 0; display: flex; flex-direction: column; font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0d1017; color: #e6e6e6; overflow: hidden; }
+
+  header { flex: none; display: flex; align-items: center; gap: 12px; padding: 10px 16px; border-bottom: 1px solid #1e2430; background: #11151d; }
+  header h1 { font-size: 14px; margin: 0; font-weight: 600; color: #cfe3ff; display: flex; align-items: center; gap: 8px; }
+  header .dot { width: 8px; height: 8px; border-radius: 50%; background: #2ecc71; box-shadow: 0 0 8px #2ecc71; flex: none; }
+  .grow { flex: 1; }
+  .tbtn { background: #161b26; color: #c7d0dd; border: 1px solid #2a3140; border-radius: 8px; padding: 6px 12px; font-size: 13px; cursor: pointer; }
+  .tbtn:hover { background: #1c2433; }
+  .tbtn:disabled { opacity: .45; cursor: default; }
+  .toggle { display: flex; align-items: center; gap: 7px; font-size: 13px; color: #aab4c4; cursor: pointer; user-select: none; }
+  .toggle input { display: none; }
+  .toggle .sw { width: 34px; height: 19px; border-radius: 19px; background: #2a3140; position: relative; transition: background .15s; }
+  .toggle .sw::after { content: ""; position: absolute; width: 15px; height: 15px; border-radius: 50%; background: #cfd6e0; top: 2px; left: 2px; transition: left .15s; }
+  .toggle input:checked + .sw { background: #2b6cff; }
+  .toggle input:checked + .sw::after { left: 17px; }
+
+  .picker { position: relative; }
+  .picker-btn { display: flex; align-items: center; gap: 8px; max-width: 230px; background: #0d1017; color: #e6e6e6; border: 1px solid #2a3140; border-radius: 8px; padding: 6px 10px; font-size: 13px; cursor: pointer; }
+  .picker-btn .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .picker-btn .caret { color: #7d8694; font-size: 10px; flex: none; }
+  .menu { position: absolute; top: calc(100% + 6px); right: 0; z-index: 40; margin: 0; padding: 6px; list-style: none; min-width: 230px; max-height: 60vh; overflow-y: auto; background: #141923; border: 1px solid #2a3140; border-radius: 10px; box-shadow: 0 14px 34px rgba(0,0,0,.55); }
+  .menu[hidden] { display: none; }
+  .menu li { padding: 8px 10px 8px 26px; border-radius: 6px; cursor: pointer; font-size: 13px; white-space: nowrap; position: relative; }
+  .menu li:hover { background: #1c2636; }
+  .menu li.sel { color: #7fd0ff; }
+  .menu li.sel::before { content: "\2713"; position: absolute; left: 9px; }
+
+  main { flex: 1; display: flex; min-height: 0; }
+
+  /* history sidebar */
+  .sidebar { flex: none; width: 212px; display: flex; flex-direction: column; min-height: 0; background: #0b0e14; border-right: 1px solid #1e2430; }
+  .sidebar.collapsed { display: none; }
+  .sbhead { flex: none; display: flex; align-items: center; gap: 8px; padding: 10px 12px; }
+  .sbhead .t { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: #6b7787; }
+  .newbtn { margin-left: auto; background: #1a2230; color: #cfe3ff; border: 1px solid #2a3140; border-radius: 7px; padding: 4px 9px; font-size: 12px; cursor: pointer; }
+  .chatlist { flex: 1; overflow-y: auto; padding: 0 8px 10px; }
+  .chatlist .item { display: flex; align-items: center; gap: 6px; padding: 8px 9px; border-radius: 8px; cursor: pointer; color: #b6c0cf; font-size: 13px; }
+  .chatlist .item:hover { background: #141a24; }
+  .chatlist .item.on { background: #182236; color: #e6e6e6; }
+  .chatlist .item .ttl { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .chatlist .item .del { opacity: 0; color: #6b7787; font-size: 15px; }
+  .chatlist .item:hover .del { opacity: 1; }
+  .chatlist .empty2 { color: #4d5765; font-size: 12px; padding: 10px 9px; }
+
+  .chat { flex: 0 0 42%; min-width: 320px; display: flex; flex-direction: column; min-height: 0; border-right: 1px solid #1e2430; }
+  .workspace { flex: 1; display: flex; flex-direction: column; min-height: 0; min-width: 0; background: #0a0d13; }
+
+  #log { flex: 1; overflow-y: auto; padding: 20px 18px; position: relative; }
+  .msg { display: flex; gap: 11px; margin: 0 0 20px; }
+  .msg .who { flex: none; width: 28px; height: 28px; border-radius: 7px; font-size: 12px; display: flex; align-items: center; justify-content: center; font-weight: 700; }
   .msg.user .who { background: #2b4a78; color: #dbe9ff; }
-  .msg.bot  .who { background: #1d3a2a; color: #aef0c4; }
-  .msg .body { padding-top: 4px; white-space: pre-wrap; word-wrap: break-word; min-width: 0; }
-  .msg .body pre {
-    background: #0a0d13; border: 1px solid #1e2430; border-radius: 8px;
-    padding: 12px 14px; overflow-x: auto; white-space: pre;
-  }
-  .msg .body code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
+  .msg.bot .who { background: #1d3a2a; color: #aef0c4; }
+  .msg .body { padding-top: 4px; white-space: pre-wrap; word-wrap: break-word; min-width: 0; flex: 1; }
+  .msg .body pre { background: #0a0d13; border: 1px solid #1e2430; border-radius: 8px; padding: 11px 13px; overflow-x: auto; white-space: pre; }
+  .msg .body code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; }
   .msg .body :not(pre) > code { background: #1a1f29; padding: 1px 5px; border-radius: 4px; }
+  .codecard { background: #0a0d13; border: 1px solid #233; border-radius: 8px; padding: 10px 12px; color: #9fb3c8; font-size: 13px; }
+  .codecard b { color: #cfe3ff; }
   .think { color: #7d8694; font-style: italic; border-left: 2px solid #2a3140; padding-left: 10px; margin: 6px 0; }
-  footer { border-top: 1px solid #1e2430; background: #11151d; padding: 12px 0 16px; }
+  .approve { background: #11151d; border: 1px solid #33405a; border-radius: 10px; padding: 11px 13px; margin-top: 6px; }
+  .approve .lbl { font-size: 12px; color: #8a95a5; margin-bottom: 6px; }
+  .approve pre { margin: 0 0 9px; background: #0a0d13; border: 1px solid #1e2430; border-radius: 7px; padding: 9px 11px; overflow-x: auto; color: #d6e2ef; font-family: ui-monospace, Menlo, monospace; font-size: 12.5px; white-space: pre-wrap; }
+  .approve .btns { display: flex; gap: 8px; }
+  .approve button { border: 0; border-radius: 7px; padding: 6px 14px; font-size: 13px; font-weight: 600; cursor: pointer; }
+  .approve .ok { background: #2b6cff; color: #fff; }
+  .approve .no { background: #2a3140; color: #c7d0dd; }
+  .approve.done .btns { display: none; }
+  .approve.done .lbl::after { content: " — done"; color: #2ecc71; }
+
+  .empty { min-height: 70%; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; color: #5b6472; }
+  .empty h2 { color: #aab4c4; font-weight: 600; margin: 0 0 6px; }
+  .empty .ex { margin-top: 14px; font-size: 13px; }
+  .empty .ex span { color: #7fd0ff; cursor: pointer; border-bottom: 1px dashed #2a4a5a; }
+  .jump { position: absolute; right: 16px; bottom: 12px; background: #1c2433; border: 1px solid #2a3140; color: #c7d0dd; border-radius: 20px; padding: 6px 12px; font-size: 12px; cursor: pointer; box-shadow: 0 6px 18px rgba(0,0,0,.4); }
+  .jump[hidden] { display: none; }
+
+  .composer { flex: none; border-top: 1px solid #1e2430; background: #11151d; padding: 12px 16px 14px; }
   .inrow { display: flex; gap: 10px; align-items: flex-end; }
-  textarea {
-    flex: 1; resize: none; background: #0d1017; color: #e6e6e6; border: 1px solid #2a3140;
-    border-radius: 10px; padding: 11px 13px; font: inherit; max-height: 180px;
-  }
-  button {
-    background: #2b6cff; color: #fff; border: 0; border-radius: 10px;
-    padding: 11px 18px; font-weight: 600; cursor: pointer;
-  }
-  button:disabled { opacity: .5; cursor: default; }
-  .hint { color: #5b6472; font-size: 12px; text-align: center; margin-top: 8px; }
-  .empty { text-align: center; color: #5b6472; margin-top: 12vh; }
-  .empty h2 { color: #aab4c4; font-weight: 600; }
+  textarea { flex: 1; resize: none; background: #0d1017; color: #e6e6e6; border: 1px solid #2a3140; border-radius: 10px; padding: 10px 12px; font: inherit; min-height: 42px; max-height: 160px; }
+  textarea:focus, .picker-btn:focus { outline: none; border-color: #2b6cff; }
+  button.send { flex: none; height: 42px; padding: 0 18px; background: #2b6cff; color: #fff; border: 0; border-radius: 10px; font-weight: 600; cursor: pointer; }
+  button.send:disabled { opacity: .5; cursor: default; }
+  .hint { color: #5b6472; font-size: 11.5px; text-align: center; margin-top: 7px; }
+
+  .tabs { flex: none; display: flex; align-items: center; gap: 4px; padding: 8px 12px; border-bottom: 1px solid #1e2430; }
+  .tab { background: transparent; border: 0; color: #8a95a5; padding: 6px 12px; border-radius: 7px; font-size: 13px; cursor: pointer; }
+  .tab.on { background: #1a2230; color: #e6e6e6; }
+  .wsbody { flex: 1; min-height: 0; position: relative; }
+  #preview { width: 100%; height: 100%; border: 0; background: #fff; display: block; }
+  #codeview, #termview { position: absolute; inset: 0; margin: 0; overflow: auto; padding: 14px 16px; white-space: pre-wrap; word-break: break-word; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; }
+  #codeview { color: #cdd6e0; }
+  #termview { color: #b8c6d0; background: #07090d; }
+  #termview .cmd { color: #7fd0ff; }
+  #termview .err { color: #ff9b9b; }
+  .wsempty { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; color: #4d5765; gap: 8px; }
+  .wsempty b { color: #8a95a5; font-weight: 600; }
+  .hidden { display: none !important; }
+
+  @media (max-width: 980px) { .sidebar { width: 0; display: none; } }
+  @media (max-width: 860px) { main { flex-direction: column; } .chat { flex: 1 1 50%; min-width: 0; border-right: 0; border-bottom: 1px solid #1e2430; } .workspace { flex: 1 1 50%; } }
 </style>
 </head>
 <body>
   <header>
-    <span class="dot" id="dot"></span>
-    <h1>Local LLM Chat</h1>
-    <select id="model" title="Choose a model"></select>
+    <button class="tbtn" id="sbToggle" title="Toggle history">&#9776;</button>
+    <h1><span class="dot" id="dot"></span> Local LLM Builder</h1>
+    <div class="picker">
+      <button class="picker-btn" id="pickerBtn" type="button"><span class="name" id="pickerName">Loading...</span><span class="caret">&#9660;</span></button>
+      <ul class="menu" id="menu" hidden></ul>
+    </div>
+    <div class="grow"></div>
+    <label class="toggle" id="agentLabel" title="Let the model run commands + write files (asks before each)"><input type="checkbox" id="agentChk"><span class="sw"></span> Agent</label>
+    <button class="tbtn" id="dlBtn" title="Download the current app" disabled>Download</button>
   </header>
-  <div id="log">
-    <div class="wrap" id="logwrap">
-      <div class="empty" id="empty">
-        <h2>Chat with a model running on your machine</h2>
-        <div>100% local — nothing leaves this computer.</div>
+
+  <main>
+    <aside class="sidebar" id="sidebar">
+      <div class="sbhead"><span class="t">Chats</span><button class="newbtn" id="newBtn">+ New</button></div>
+      <div class="chatlist" id="chatlist"></div>
+    </aside>
+
+    <section class="chat">
+      <div id="log">
+        <div class="empty" id="empty">
+          <h2>Build something — runs on your machine</h2>
+          <div>Describe an app and watch it appear in the preview. 100% local.</div>
+          <div class="ex">Try: <span data-ex="Build me a stopwatch with start, stop, and reset.">a stopwatch</span> &middot; <span data-ex="Build a to-do list that saves to localStorage.">a to-do list</span> &middot; <span data-ex="Build a tip calculator.">a tip calculator</span></div>
+        </div>
+        <button class="jump" id="jump" hidden>Jump to latest &darr;</button>
       </div>
-    </div>
-  </div>
-  <footer>
-    <div class="wrap">
-      <div class="inrow">
-        <textarea id="input" rows="1" placeholder="Message your local model...  (Enter to send, Shift+Enter for a new line)"></textarea>
-        <button id="send">Send</button>
+      <div class="composer">
+        <div class="inrow">
+          <textarea id="input" rows="1" placeholder="Describe an app to build, or ask anything...  (Enter to send, Shift+Enter = new line)"></textarea>
+          <button class="send" id="send">Send</button>
+        </div>
+        <div class="hint" id="hint">Talking to Ollama at http://localhost:11434</div>
       </div>
-      <div class="hint" id="hint">Talking to Ollama at http://localhost:11434</div>
-    </div>
-  </footer>
+    </section>
+
+    <section class="workspace">
+      <div class="tabs">
+        <button class="tab on" id="tabPreview" data-tab="preview">Preview</button>
+        <button class="tab" id="tabCode" data-tab="code">Code</button>
+        <button class="tab" id="tabTerm" data-tab="term">Terminal</button>
+      </div>
+      <div class="wsbody">
+        <iframe id="preview" sandbox="allow-scripts allow-forms allow-modals allow-popups"></iframe>
+        <pre id="codeview" class="hidden"></pre>
+        <pre id="termview" class="hidden"></pre>
+        <div class="wsempty" id="wsempty"><b>No app yet</b><div>Ask the model to build something &mdash; it'll render here, live.</div></div>
+      </div>
+    </section>
+  </main>
+
 <script>
 const API = "http://localhost:11434";
-const logwrap = document.getElementById("logwrap");
-const empty = document.getElementById("empty");
-const input = document.getElementById("input");
-const sendBtn = document.getElementById("send");
-const modelSel = document.getElementById("model");
-const dot = document.getElementById("dot");
-const hint = document.getElementById("hint");
-let messages = [];
-let busy = false;
+const AGENT_URL = location.origin;   // the page is served by the agent server (when present)
+const BUILDER_SYSTEM =
+  "You are a local web-app builder (like Lovable or Bolt) running on the user's machine. " +
+  "When the user asks you to build, create, make, or modify an app, page, UI, game, widget, or tool, " +
+  "respond with ONE complete, self-contained HTML file inside a single ```html code block — all CSS and " +
+  "JavaScript inline, no external libraries, CDNs, or build steps. Put a one-line description before the code. " +
+  "When the user asks for a change, output the FULL updated file again. For non-build questions, answer normally.";
+const AGENT_SYSTEM =
+  "You are a local coding agent on the user's machine, working inside a sandboxed workspace folder. " +
+  "You have two tools. To run a shell command, output EXACTLY one block:\n<run>the command</run>\n" +
+  "To write a file (path is relative to the workspace), output EXACTLY:\n<write path=\"relative/path\">\nfile contents\n</write>\n" +
+  "Output ONE tool call, then STOP and wait — I will reply with <result>...</result>. Use the result to decide the next step. " +
+  "When the task is fully done, reply normally with NO tool tags. Keep commands safe and scoped to the workspace.";
+
+const el = id => document.getElementById(id);
+const log = el("log"), empty = el("empty"), input = el("input"), sendBtn = el("send");
+const dot = el("dot"), hint = el("hint"), jump = el("jump");
+const pickerBtn = el("pickerBtn"), pickerName = el("pickerName"), menu = el("menu");
+const preview = el("preview"), codeview = el("codeview"), termview = el("termview"), wsempty = el("wsempty");
+const tabPreview = el("tabPreview"), tabCode = el("tabCode"), tabTerm = el("tabTerm"), dlBtn = el("dlBtn");
+const sidebar = el("sidebar"), chatlist = el("chatlist"), agentChk = el("agentChk"), agentLabel = el("agentLabel");
+
+let messages = [], busy = false, currentModel = "", currentApp = "", stick = true;
+let currentId = newId(), agentReady = false;
+function newId() { return "c" + Math.random().toString(36).slice(2, 9); }
+
+/* ---------- model picker ---------- */
 async function loadModels() {
   try {
-    const r = await fetch(API + "/api/tags");
-    const data = await r.json();
-    const names = (data.models || []).map(m => m.name).sort();
+    const names = ((await (await fetch(API + "/api/tags")).json()).models || []).map(m => m.name).sort();
     if (!names.length) throw new Error("no models");
-    modelSel.innerHTML = "";
+    currentModel = names.find(n => /coder.*8k/i.test(n)) || names.find(n => /coder/i.test(n)) || names[0];
+    pickerName.textContent = currentModel;
+    menu.innerHTML = "";
     for (const n of names) {
-      const o = document.createElement("option");
-      o.value = n; o.textContent = n; modelSel.appendChild(o);
+      const li = document.createElement("li");
+      li.textContent = n; li.dataset.model = n;
+      if (n === currentModel) li.classList.add("sel");
+      li.addEventListener("click", () => { currentModel = n; pickerName.textContent = n; for (const x of menu.children) x.classList.toggle("sel", x.dataset.model === n); menu.hidden = true; });
+      menu.appendChild(li);
     }
-    const preferred = names.find(n => /coder.*8k/i.test(n)) || names.find(n => /coder/i.test(n)) || names[0];
-    modelSel.value = preferred;
   } catch (e) {
+    pickerName.textContent = "no models";
     dot.style.background = "#e74c3c"; dot.style.boxShadow = "0 0 8px #e74c3c";
     hint.textContent = "Can't reach Ollama at localhost:11434 - is it running? (try: ollama list)";
   }
 }
-function escapeHtml(s) {
-  return s.replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+pickerBtn.addEventListener("click", e => { e.stopPropagation(); menu.hidden = !menu.hidden; });
+document.addEventListener("click", e => { if (!menu.contains(e.target) && e.target !== pickerBtn) menu.hidden = true; });
+document.addEventListener("keydown", e => { if (e.key === "Escape") menu.hidden = true; });
+
+/* ---------- agent server detection ---------- */
+async function detectAgent() {
+  try {
+    const r = await fetch(AGENT_URL + "/api/agent/ping", { method: "GET" });
+    agentReady = r.ok;
+  } catch (e) { agentReady = false; }
+  if (!agentReady) {
+    agentChk.checked = false; agentChk.disabled = true;
+    agentLabel.title = "Agent tools need the agent server: run  ./local-llm-setup.sh --agent";
+    agentLabel.style.opacity = ".5";
+  }
 }
+
+/* ---------- chat rendering ---------- */
+function escapeHtml(s) { return s.replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c])); }
 function render(text) {
-  const parts = text.split(/(```[\s\S]*?```)/g);
-  return parts.map(p => {
-    if (p.startsWith("```")) {
-      const body = p.replace(/^```[^\n]*\n?/, "").replace(/```$/, "");
-      return "<pre><code>" + escapeHtml(body) + "</code></pre>";
-    }
+  // hide tool tags + full HTML apps from the bubble (they show in workspace panes)
+  let t = text.replace(/<run>[\s\S]*?<\/run>/gi, " RUNTOOL ").replace(/<write\s+path=[\s\S]*?<\/write>/gi, " WRITETOOL ");
+  t = t.replace(/```(?:html)?\s*[\s\S]*?```/gi, m => /<\/html>|<!doctype/i.test(m) ? " APP " : m);
+  let html = t.split(/(```[\s\S]*?```)/g).map(p => {
+    if (p.startsWith("```")) return "<pre><code>" + escapeHtml(p.replace(/^```[^\n]*\n?/, "").replace(/```$/, "")) + "</code></pre>";
     let h = escapeHtml(p);
     h = h.replace(/&lt;think&gt;([\s\S]*?)&lt;\/think&gt;/g, '<div class="think">$1</div>');
-    h = h.replace(/`([^`]+)`/g, "<code>$1</code>");
-    h = h.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+    h = h.replace(/`([^`]+)`/g, "<code>$1</code>").replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
     return h;
   }).join("");
+  html = html.replace(/ APP /g, '<div class="codecard">&#9633; <b>App</b> &rarr; shown in the live preview</div>')
+             .replace(/ RUNTOOL /g, "").replace(/ WRITETOOL /g, "");
+  return html;
 }
 function addMsg(role, text) {
   empty.style.display = "none";
-  const el = document.createElement("div");
-  el.className = "msg " + (role === "user" ? "user" : "bot");
-  el.innerHTML = '<div class="who">' + (role === "user" ? "You" : "AI") + '</div><div class="body"></div>';
-  const body = el.querySelector(".body");
-  body.innerHTML = render(text);
-  logwrap.appendChild(el);
+  const w = document.createElement("div");
+  w.className = "msg " + (role === "user" ? "user" : "bot");
+  w.innerHTML = '<div class="who">' + (role === "user" ? "You" : "AI") + '</div><div class="body"></div>';
+  w.querySelector(".body").innerHTML = render(text);
+  log.insertBefore(w, jump);
   scrollDown();
-  return body;
+  return w.querySelector(".body");
 }
-function scrollDown() { const l = document.getElementById("log"); l.scrollTop = l.scrollHeight; }
+
+/* ---------- scroll ---------- */
+function atBottom() { return log.scrollHeight - log.scrollTop - log.clientHeight < 60; }
+function scrollDown() { if (stick) log.scrollTop = log.scrollHeight; }
+log.addEventListener("scroll", () => { stick = atBottom(); jump.hidden = stick; });
+jump.addEventListener("click", () => { stick = true; log.scrollTop = log.scrollHeight; jump.hidden = true; });
+
+/* ---------- workspace ---------- */
+function extractApp(text) {
+  const fences = [...text.matchAll(/```(?:html)?\s*([\s\S]*?)```/gi)].map(m => m[1]);
+  for (let i = fences.length - 1; i >= 0; i--) if (/<\/html>|<!doctype|<body/i.test(fences[i])) return fences[i].trim();
+  return null;
+}
+function setApp(code) { currentApp = code; preview.srcdoc = code; codeview.textContent = code; wsempty.classList.add("hidden"); dlBtn.disabled = false; showTab("preview"); }
+function showTab(which) {
+  for (const [t, n] of [[tabPreview, "preview"], [tabCode, "code"], [tabTerm, "term"]]) t.classList.toggle("on", n === which);
+  preview.classList.toggle("hidden", which !== "preview");
+  codeview.classList.toggle("hidden", which !== "code");
+  termview.classList.toggle("hidden", which !== "term");
+}
+tabPreview.addEventListener("click", () => showTab("preview"));
+tabCode.addEventListener("click", () => showTab("code"));
+tabTerm.addEventListener("click", () => showTab("term"));
+dlBtn.addEventListener("click", () => { const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([currentApp], { type: "text/html" })); a.download = "app.html"; a.click(); URL.revokeObjectURL(a.href); });
+function term(html) { termview.classList.remove("hidden"); termview.insertAdjacentHTML("beforeend", html); termview.scrollTop = termview.scrollHeight; }
+
+/* ---------- history (localStorage) ---------- */
+const STORE = "llmbuilder.chats.v1";
+function loadStore() { try { return JSON.parse(localStorage.getItem(STORE) || "[]"); } catch (e) { return []; } }
+function saveStore(a) { localStorage.setItem(STORE, JSON.stringify(a)); }
+function persist() {
+  if (!messages.length) return;
+  const a = loadStore();
+  const title = (messages.find(m => m.role === "user") || {}).content || "New chat";
+  const rec = { id: currentId, title: title.slice(0, 60), messages, app: currentApp, ts: Date.now() };
+  const i = a.findIndex(c => c.id === currentId);
+  if (i >= 0) a[i] = rec; else a.unshift(rec);
+  saveStore(a); renderList();
+}
+function renderList() {
+  const a = loadStore();
+  chatlist.innerHTML = a.length ? "" : '<div class="empty2">No saved chats yet.</div>';
+  for (const c of a) {
+    const d = document.createElement("div");
+    d.className = "item" + (c.id === currentId ? " on" : "");
+    d.innerHTML = '<span class="ttl"></span><span class="del" title="Delete">&times;</span>';
+    d.querySelector(".ttl").textContent = c.title || "Untitled";
+    d.querySelector(".ttl").addEventListener("click", () => openChat(c.id));
+    d.querySelector(".del").addEventListener("click", e => { e.stopPropagation(); deleteChat(c.id); });
+    chatlist.appendChild(d);
+  }
+}
+function clearMessagesUI() { [...log.querySelectorAll(".msg")].forEach(n => n.remove()); }
+function newChat() {
+  currentId = newId(); messages = []; currentApp = "";
+  preview.srcdoc = ""; codeview.textContent = ""; termview.textContent = ""; dlBtn.disabled = true;
+  wsempty.classList.remove("hidden"); showTab("preview");
+  clearMessagesUI(); empty.style.display = ""; renderList(); input.focus();
+}
+function openChat(id) {
+  const c = loadStore().find(x => x.id === id); if (!c) return;
+  currentId = id; messages = c.messages || []; currentApp = c.app || "";
+  clearMessagesUI(); empty.style.display = messages.length ? "none" : "";
+  for (const m of messages) addMsg(m.role, m.content);
+  if (currentApp) { preview.srcdoc = currentApp; codeview.textContent = currentApp; wsempty.classList.add("hidden"); dlBtn.disabled = false; }
+  else { preview.srcdoc = ""; wsempty.classList.remove("hidden"); dlBtn.disabled = true; }
+  showTab("preview"); renderList(); stick = true; scrollDown();
+}
+function deleteChat(id) {
+  saveStore(loadStore().filter(c => c.id !== id));
+  if (id === currentId) newChat(); else renderList();
+}
+el("newBtn").addEventListener("click", newChat);
+el("sbToggle").addEventListener("click", () => sidebar.classList.toggle("collapsed"));
+
+/* ---------- agent tools ---------- */
+function findToolCall(text) {
+  const run = text.match(/<run>([\s\S]*?)<\/run>/i);
+  if (run) return { kind: "run", cmd: run[1].trim() };
+  const wr = text.match(/<write\s+path="([^"]+)">\n?([\s\S]*?)<\/write>/i);
+  if (wr) return { kind: "write", path: wr[1].trim(), content: wr[2] };
+  return null;
+}
+function approvalCard(tool) {
+  return new Promise(resolve => {
+    const c = document.createElement("div");
+    c.className = "msg bot";
+    const label = tool.kind === "run" ? "Run this command?" : ("Write file: " + tool.path + "?");
+    const codeTxt = tool.kind === "run" ? tool.cmd : tool.content;
+    c.innerHTML = '<div class="who">&#9889;</div><div class="body"><div class="approve"><div class="lbl"></div><pre></pre><div class="btns"><button class="ok">Approve</button><button class="no">Skip</button></div></div></div>';
+    c.querySelector(".lbl").textContent = label;
+    c.querySelector("pre").textContent = codeTxt;
+    log.insertBefore(c, jump); scrollDown();
+    const card = c.querySelector(".approve");
+    c.querySelector(".ok").addEventListener("click", () => { card.classList.add("done"); resolve(true); });
+    c.querySelector(".no").addEventListener("click", () => { card.classList.add("done"); resolve(false); });
+  });
+}
+async function runTool(tool) {
+  if (tool.kind === "run") {
+    term('<span class="cmd">$ ' + escapeHtml(tool.cmd) + '</span>\n');
+    const r = await fetch(AGENT_URL + "/api/agent/run", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ cmd: tool.cmd }) });
+    const j = await r.json();
+    const out = (j.stdout || "") + (j.stderr ? "\n" + j.stderr : "");
+    if (out.trim()) term((j.stderr && !j.stdout ? '<span class="err">' : "<span>") + escapeHtml(out) + "</span>\n");
+    term('<span style="color:#5b6472">[exit ' + j.code + ']</span>\n\n');
+    showTab("term");
+    return "exit code " + j.code + "\n" + out.slice(0, 4000);
+  } else {
+    const r = await fetch(AGENT_URL + "/api/agent/write", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path: tool.path, content: tool.content }) });
+    const j = await r.json();
+    term('<span class="cmd">[write] ' + escapeHtml(tool.path) + '</span> ' + (j.ok ? "ok" : ('<span class="err">' + escapeHtml(j.error || "failed") + "</span>")) + "\n");
+    showTab("term");
+    return j.ok ? ("wrote " + tool.path) : ("error: " + (j.error || "failed"));
+  }
+}
+
+/* ---------- the model call ---------- */
+async function callModel(onTok) {
+  const sys = agentChk.checked ? AGENT_SYSTEM : BUILDER_SYSTEM;
+  const resp = await fetch(API + "/api/chat", { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ model: currentModel, stream: true, messages: [{ role: "system", content: sys }, ...messages] }) });
+  const reader = resp.body.getReader(); const dec = new TextDecoder(); let buf = "", acc = "";
+  while (true) {
+    const { done, value } = await reader.read(); if (done) break;
+    buf += dec.decode(value, { stream: true });
+    const lines = buf.split("\n"); buf = lines.pop();
+    for (const line of lines) { if (!line.trim()) continue; const o = JSON.parse(line); if (o.message && o.message.content) { acc += o.message.content; onTok(acc); } }
+  }
+  return acc;
+}
+
 async function send() {
   const text = input.value.trim();
-  if (!text || busy) return;
-  busy = true; sendBtn.disabled = true;
-  input.value = ""; input.style.height = "auto";
-  addMsg("user", text);
-  messages.push({ role: "user", content: text });
-  const body = addMsg("assistant", "");
-  let acc = "";
+  if (!text || busy || !currentModel) return;
+  busy = true; sendBtn.disabled = true; input.value = ""; input.style.height = "auto"; stick = true;
+  addMsg("user", text); messages.push({ role: "user", content: text });
   try {
-    const resp = await fetch(API + "/api/chat", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ model: modelSel.value, messages, stream: true })
-    });
-    const reader = resp.body.getReader();
-    const dec = new TextDecoder();
-    let buf = "";
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buf += dec.decode(value, { stream: true });
-      const lines = buf.split("\n"); buf = lines.pop();
-      for (const line of lines) {
-        if (!line.trim()) continue;
-        const obj = JSON.parse(line);
-        if (obj.message && obj.message.content) {
-          acc += obj.message.content;
-          body.innerHTML = render(acc);
-          scrollDown();
+    let steps = 0;
+    while (steps++ < 12) {
+      const body = addMsg("assistant", "");
+      const acc = await callModel(t => { body.innerHTML = render(t); scrollDown(); });
+      messages.push({ role: "assistant", content: acc });
+      // builder mode: render any app
+      const app = extractApp(acc); if (app) setApp(app);
+      // agent mode: handle a tool call (with approval), then loop
+      if (agentChk.checked && agentReady) {
+        const tool = findToolCall(acc);
+        if (tool) {
+          const ok = await approvalCard(tool);
+          const result = ok ? await runTool(tool) : "skipped by user";
+          messages.push({ role: "user", content: "<result>\n" + result + "\n</result>" });
+          continue;
         }
       }
+      break;
     }
-    messages.push({ role: "assistant", content: acc });
   } catch (e) {
-    body.innerHTML = render("Error talking to the model: " + e.message);
+    addMsg("assistant", "Error: " + e.message);
   } finally {
-    busy = false; sendBtn.disabled = false; input.focus();
+    busy = false; sendBtn.disabled = false; input.focus(); persist();
   }
 }
 sendBtn.addEventListener("click", send);
-input.addEventListener("keydown", e => {
-  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
-});
-input.addEventListener("input", () => {
-  input.style.height = "auto"; input.style.height = Math.min(input.scrollHeight, 180) + "px";
-});
-loadModels();
-input.focus();
+input.addEventListener("keydown", e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } });
+input.addEventListener("input", () => { input.style.height = "auto"; input.style.height = Math.min(input.scrollHeight, 160) + "px"; });
+document.querySelectorAll(".empty .ex span").forEach(s => s.addEventListener("click", () => { input.value = s.dataset.ex; send(); }));
+
+loadModels(); detectAgent(); renderList(); input.focus();
 </script>
 </body>
 </html>
@@ -499,6 +741,146 @@ input.focus();
 
 # Open a local browser chat. Serves the page from 127.0.0.1 via python if
 # present; otherwise points you at the native Ollama app (which has its own chat).
+function Test-AgentUp {
+  try { Invoke-WebRequest -Uri "http://127.0.0.1:$ChatPort/api/agent/ping" -TimeoutSec 2 -UseBasicParsing -ErrorAction Stop | Out-Null; $true }
+  catch { $false }
+}
+
+# Write the bundled agent tool-server (Python) to $path. Embedded so the script
+# stays self-contained; its safety model is documented in the file's header.
+function Write-AgentServer {
+  param([string]$path)
+  $py = @'
+#!/usr/bin/env python3
+# Local LLM Builder — agent server (MVP).
+#
+# Serves the builder page AND exposes a tiny, sandboxed tool API to it:
+#   GET  /api/agent/ping          -> {ok:true}
+#   POST /api/agent/run  {cmd}    -> run a shell command IN the workspace dir
+#   POST /api/agent/write {path,content} -> write a file UNDER the workspace dir
+#
+# Safety posture (MVP — see README before shipping):
+#   - binds 127.0.0.1 only (never exposed off the machine)
+#   - CORS + Origin check: browser requests are only accepted from this page's
+#     own origin, so a random website you visit cannot drive your tools
+#   - file writes are confined to the workspace (path-escape is rejected)
+#   - shell commands run with cwd = workspace and a 30s timeout
+#   - the *page* asks you to Approve every command before it is ever sent here
+#
+# It does NOT yet sandbox the command itself (an approved `rm -rf ~` would still
+# run) — approval in the UI is the guardrail. Harden before any default ship.
+
+import json, os, subprocess
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+HOST, PORT = "127.0.0.1", 8765
+HOME = os.path.expanduser("~")
+CHAT_DIR  = os.path.join(HOME, ".local-llm-setup", "chat")
+WORKSPACE = os.path.realpath(os.path.join(HOME, ".local-llm-setup", "workspace"))
+os.makedirs(WORKSPACE, exist_ok=True)
+ORIGINS = {f"http://localhost:{PORT}", f"http://127.0.0.1:{PORT}"}
+
+def safe_path(rel):
+    p = os.path.realpath(os.path.join(WORKSPACE, rel))
+    if p != WORKSPACE and not p.startswith(WORKSPACE + os.sep):
+        raise ValueError("path escapes the workspace")
+    return p
+
+class H(BaseHTTPRequestHandler):
+    def _cors(self):
+        o = self.headers.get("Origin")
+        if o in ORIGINS:
+            self.send_header("Access-Control-Allow-Origin", o)
+            self.send_header("Access-Control-Allow-Headers", "Content-Type")
+            self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+    def _json(self, code, obj):
+        body = json.dumps(obj).encode()
+        self.send_response(code); self._cors()
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers(); self.wfile.write(body)
+    def _origin_ok(self):
+        o = self.headers.get("Origin")
+        return o is None or o in ORIGINS
+    def do_OPTIONS(self):
+        self.send_response(204); self._cors(); self.end_headers()
+    def do_GET(self):
+        if self.path.startswith("/api/agent/ping"):
+            return self._json(200, {"ok": True, "workspace": WORKSPACE})
+        name = "index.html" if self.path in ("/", "") else os.path.basename(self.path.split("?")[0])
+        fp = os.path.join(CHAT_DIR, name)
+        if os.path.isfile(fp):
+            data = open(fp, "rb").read()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers(); self.wfile.write(data)
+        else:
+            self.send_response(404); self.end_headers()
+    def do_POST(self):
+        if not self._origin_ok():
+            return self._json(403, {"error": "origin not allowed"})
+        n = int(self.headers.get("Content-Length", 0) or 0)
+        try: req = json.loads(self.rfile.read(n) or b"{}")
+        except Exception: req = {}
+        if self.path.startswith("/api/agent/run"):
+            cmd = (req.get("cmd") or "").strip()
+            if not cmd: return self._json(400, {"error": "no command"})
+            try:
+                p = subprocess.run(cmd, shell=True, cwd=WORKSPACE, capture_output=True, text=True, timeout=30)
+                return self._json(200, {"stdout": p.stdout, "stderr": p.stderr, "code": p.returncode})
+            except subprocess.TimeoutExpired:
+                return self._json(200, {"stdout": "", "stderr": "timed out after 30s", "code": 124})
+        if self.path.startswith("/api/agent/write"):
+            try:
+                fp = safe_path(req.get("path", ""))
+                os.makedirs(os.path.dirname(fp), exist_ok=True)
+                with open(fp, "w") as f: f.write(req.get("content", ""))
+                return self._json(200, {"ok": True})
+            except Exception as e:
+                return self._json(200, {"ok": False, "error": str(e)})
+        return self._json(404, {"error": "unknown endpoint"})
+    def log_message(self, *a): pass
+
+if __name__ == "__main__":
+    print(f"Local LLM agent server -> http://{HOST}:{PORT}   (workspace: {WORKSPACE})")
+    ThreadingHTTPServer((HOST, PORT), H).serve_forever()
+'@
+  Set-Content -LiteralPath $path -Value $py -Encoding utf8
+}
+
+# -Agent: the builder page PLUS the approve-to-run tool server (runs commands you
+# OK and writes files inside a workspace folder). Opt-in + consented. Needs Python.
+function Invoke-Agent {
+  Step 'Agent mode — builder + approve-to-run tools'
+  $py = Get-Command python -ErrorAction SilentlyContinue
+  if (-not $py) { $py = Get-Command python3 -ErrorAction SilentlyContinue }
+  if (-not $py) {
+    Warn 'Agent mode needs Python (it runs the tiny local tool server).'
+    Say '  Install Python from https://python.org, or use the no-tools builder:  .\local-llm-setup.ps1 -Chat'
+    return
+  }
+  Warn 'Agent mode lets the model RUN COMMANDS and WRITE FILES on your machine.'
+  Say "  It only ever acts after you click Approve in the browser, inside a workspace folder"
+  Say "  ($HomeDir\.local-llm-setup\workspace); commands run locally with a 30s timeout."
+  if ($DryRun) { Say '[dry-run] write builder page + agent server, launch on 127.0.0.1:8765'; return }
+  if (-not (Ask 'Start the agent server?' 'n')) { Say '  Skipped — run the no-tools builder anytime: .\local-llm-setup.ps1 -Chat'; return }
+  New-Item -ItemType Directory -Force -Path $ChatDir | Out-Null
+  Write-ChatHtml (Join-Path $ChatDir 'index.html')
+  Write-AgentServer $AgentPy
+  if (-not (Test-AgentUp)) {
+    Start-Process -FilePath $py.Source -ArgumentList $AgentPy -WindowStyle Hidden
+    for ($i = 0; $i -lt 12; $i++) { if (Test-AgentUp) { break }; Start-Sleep -Milliseconds 500 }
+  }
+  if (Test-AgentUp) {
+    Open-Url "http://localhost:$ChatPort/"
+    Ok "Agent is live at http://localhost:$ChatPort — flip the Agent toggle on (top-right)."
+    Say "  Re-open anytime:  .\local-llm-setup.ps1 -Agent"
+  } else {
+    Warn "Couldn't start the agent server on port $ChatPort (is something else using it?)."
+  }
+}
+
 function Invoke-Chat {
   Step 'Opening a local chat in your browser'
   if (-not (Test-OllamaUp)) { Warn "Ollama doesn't look like it's running yet — run setup first (the chat page will say so too)." }
@@ -608,6 +990,7 @@ if ($Benchmark) { Invoke-Benchmark; exit 0 }
 if ($Uninstall) { Invoke-Uninstall; exit 0 }
 if ($Chat)      { Invoke-Chat; exit 0 }
 if ($Editor)    { Invoke-EditorSetup; exit 0 }
+if ($Agent)     { Invoke-Agent; exit 0 }
 
 # ----------------------------------------------------------------------------
 # Recommend a tier — prefer a capable GPU's VRAM, else system RAM
@@ -797,6 +1180,9 @@ Say "    .\local-llm-setup.ps1 -Chat"
 Say ''
 Say "  AI inside your editor (Continue in VS Code / Cursor):"
 Say "    .\local-llm-setup.ps1 -Editor"
+Say ''
+Say "  Agent mode — builder + approve-to-run tools (needs Python):"
+Say "    .\local-llm-setup.ps1 -Agent"
 Say ''
 Say "  Chat in the terminal:"
 Say "    ollama run $ChatModel"
