@@ -10,6 +10,9 @@ Icon?
 *.swp
 *~
 
+# Claude Code session/local config (machine-specific — e.g. preview launch.json)
+.claude/
+
 # Logs / scratch produced by the script
 *.log
 /tmp/ollama-setup.log
