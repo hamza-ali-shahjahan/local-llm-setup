@@ -1663,11 +1663,21 @@ def _png_dims(b):
     return (0, 0)
 
 # Full Chrome/Chromium binaries usable via the `--headless=new --screenshot` subprocess
-# path: Playwright's downloaded Chromium (version-pinned, "managed") first, then any
-# system browser. (The chrome-headless-shell binary is reserved for the Playwright path,
-# whose flag handling differs.)
+# path. We try SYSTEM browsers first (they drive cleanly via raw subprocess), and only
+# then Playwright's downloaded Chromium as a last resort — that binary is meant to be
+# driven by the Playwright protocol, and via raw --screenshot it can hang, so it sits
+# at the back of the line. (chrome-headless-shell is reserved for the Playwright path.)
 def _full_chrome_candidates():
     cands = []
+    for c in ("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+              "/Applications/Chromium.app/Contents/MacOS/Chromium",
+              "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+              "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser"):
+        if os.path.exists(c): cands.append(c)
+    for name in ("google-chrome", "google-chrome-stable", "chromium", "chromium-browser",
+                 "chrome", "microsoft-edge", "brave-browser"):
+        p = shutil.which(name)
+        if p: cands.append(p)
     caches = [os.path.join(HOME, "Library", "Caches", "ms-playwright"),
               os.path.join(HOME, ".cache", "ms-playwright"),
               os.environ.get("PLAYWRIGHT_BROWSERS_PATH", "")]
@@ -1678,15 +1688,6 @@ def _full_chrome_candidates():
         if not c: continue
         for pat in pats:
             cands += sorted(glob.glob(os.path.join(c, pat)), reverse=True)   # highest revision first
-    for c in ("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-              "/Applications/Chromium.app/Contents/MacOS/Chromium",
-              "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
-              "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser"):
-        if os.path.exists(c): cands.append(c)
-    for name in ("google-chrome", "google-chrome-stable", "chromium", "chromium-browser",
-                 "chrome", "microsoft-edge", "brave-browser"):
-        p = shutil.which(name)
-        if p: cands.append(p)
     seen, out = set(), []
     for c in cands:
         if c not in seen and os.path.exists(c): seen.add(c); out.append(c)
@@ -1746,25 +1747,50 @@ def _shot_playwright(target, width, height, full_page, selector):
                     pass
             raise
 
-def _shot_chrome(target, width, height):
-    """Render with a system / managed Chrome subprocess. Returns PNG bytes, or None
-    if no full Chrome binary is found. Does not support element/full-page capture."""
-    browser = find_browser()
-    if not browser: return None
-    prof = tempfile.mkdtemp(prefix="llmshot_")
-    out = os.path.join(prof, "shot.png")
-    try:
-        # --virtual-time-budget makes headless render then EXIT (otherwise it can hang on
-        # network-idle); the no-first-run/extension flags keep cold starts fast.
-        subprocess.run([browser, "--headless=new", "--disable-gpu", "--no-sandbox", "--hide-scrollbars",
-                        "--no-first-run", "--no-default-browser-check", "--disable-extensions",
-                        "--disable-background-networking", "--virtual-time-budget=5000",
-                        "--user-data-dir=" + prof, f"--window-size={width},{height}",
-                        f"--screenshot={out}", target], capture_output=True, timeout=25)
-        if not os.path.exists(out): return None
-        return open(out, "rb").read()
-    finally:
-        shutil.rmtree(prof, ignore_errors=True)
+def _shot_chrome(target, width, height, deadline=20.0):
+    """Render with a system / managed Chrome subprocess. Tries each known browser in
+    turn and returns the first that produces a PNG, so one stalled binary can't sink the
+    whole path. We launch headless and POLL for the output file rather than waiting for
+    a clean exit — some Chrome builds write the screenshot but linger, so a plain
+    run(timeout=) would discard a perfectly good image. Returns None if none succeed.
+    Does not support element/full-page capture — those need the Playwright path."""
+    import time
+    for browser in _full_chrome_candidates():
+        prof = tempfile.mkdtemp(prefix="llmshot_")
+        out = os.path.join(prof, "shot.png")
+        proc = None
+        try:
+            # --virtual-time-budget makes headless render then (usually) exit; the
+            # no-first-run/extension flags keep cold starts fast.
+            proc = subprocess.Popen([browser, "--headless=new", "--disable-gpu", "--no-sandbox", "--hide-scrollbars",
+                                     "--no-first-run", "--no-default-browser-check", "--disable-extensions",
+                                     "--disable-background-networking", "--virtual-time-budget=5000",
+                                     "--user-data-dir=" + prof, f"--window-size={width},{height}",
+                                     f"--screenshot={out}", target],
+                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            end = time.monotonic() + deadline
+            data = None
+            while time.monotonic() < end:
+                if os.path.exists(out) and os.path.getsize(out) > 0:
+                    time.sleep(0.05)                       # let the final flush land
+                    with open(out, "rb") as _f: data = _f.read()
+                    break
+                if proc.poll() is not None:                # exited; one more look
+                    if os.path.exists(out) and os.path.getsize(out) > 0:
+                        with open(out, "rb") as _f: data = _f.read()
+                    break
+                time.sleep(0.1)
+            if data:
+                return data
+        except Exception:
+            pass            # this browser errored — try the next candidate
+        finally:
+            if proc and proc.poll() is None:
+                proc.terminate()
+                try: proc.wait(timeout=3)
+                except Exception: proc.kill()
+            shutil.rmtree(prof, ignore_errors=True)
+    return None
 
 def screenshot(url=None, html=None, width=1280, height=1600, name="shot",
                full_page=False, selector=None, outdir=None):

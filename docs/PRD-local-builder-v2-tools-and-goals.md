@@ -35,6 +35,8 @@ A 14B asked to "clone disrupt.com" hallucinates, because it can't *see* the site
 
 All server-side in `agent-server.py` (Python already has the ecosystem: `requests`, `beautifulsoup4`, `Pillow`, optional `playwright`). **127.0.0.1-bound, origin-locked, approve-to-run, workspace-confined** — the existing posture extends cleanly.
 
+> **Shipped (2026-06-17):** `screenshot` is now a robust headless capture — **Playwright's managed Chromium** as the primary path (installed on demand), with a **system-Chrome subprocess fallback** so the zero-dependency install still degrades usefully. A new **`gitsync`** tool turns a generated project into a real local git repo (`git init` + sensible `.gitignore` + commit) and exports a `.zip` that includes the `.git` history; pushing to a remote stays user-credentialed (the tool prints the `git push` command, never runs it). Both are covered by deterministic, offline stress tests under [`tests/`](../tests) — run `tools/test.sh`. Element + full-page capture are first-class on the Playwright path.
+
 ---
 
 ## 4. The clone pipeline (the headline workflow)

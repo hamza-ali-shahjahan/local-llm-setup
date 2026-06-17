@@ -1,0 +1,3 @@
+# Opts this repo out of the global auto-commit hook's auto-PUSH step.
+# Local auto-commits may still happen, but nothing is pushed to the remote automatically.
+# This enforces a manual-approval-before-push workflow. Remove to re-enable auto-push.

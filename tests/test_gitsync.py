@@ -5,7 +5,7 @@ assert a real git repo is produced with exactly the expected single commit, a co
 .gitignore (node_modules etc. actually ignored), and a .zip export that includes the
 .git history. The optional remote is only *configured*, never pushed — verified here.
 """
-import os, sys, shutil, subprocess, tempfile, zipfile, unittest
+import os, sys, pathlib, shutil, subprocess, tempfile, zipfile, unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _helpers import load_agent_server  # noqa: E402
@@ -68,7 +68,7 @@ class GitSyncTests(unittest.TestCase):
         gi = os.path.join(self.proj, ".gitignore")
         self.assertTrue(r["gitignore_written"])
         self.assertTrue(os.path.isfile(gi))
-        body = open(gi, encoding="utf-8").read()
+        body = pathlib.Path(gi).read_text(encoding="utf-8")
         for pat in ("node_modules/", ".env", "*.log"):
             self.assertIn(pat, body)
         tracked = set(git(["ls-files"], self.proj).stdout.split())
@@ -139,7 +139,7 @@ class GitSyncTests(unittest.TestCase):
             f.write(existing)
         r = self.sync()
         self.assertFalse(r["gitignore_written"])
-        self.assertEqual(open(os.path.join(self.proj, ".gitignore")).read(), existing)
+        self.assertEqual(pathlib.Path(self.proj, ".gitignore").read_text(), existing)
 
     def test_rejects_path_escape(self):
         with self.assertRaises(ValueError):

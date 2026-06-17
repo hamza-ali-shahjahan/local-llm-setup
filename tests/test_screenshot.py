@@ -5,7 +5,7 @@ HTML loaded via file://, so the tests need no network and no API keys. They asse
 capture is a *real* image: valid PNG signature, the exact requested viewport dimensions,
 and genuine non-blank pixel content (the fixture's solid colour actually shows up).
 """
-import os, sys, tempfile, unittest
+import os, sys, pathlib, tempfile, unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _helpers import load_agent_server, decode_png  # noqa: E402
@@ -38,12 +38,12 @@ class ScreenshotTests(unittest.TestCase):
         r = self.shot(html=read_fixture("solid.html"), width=400, height=300, name="solid")
         self.assertTrue(r["bytes"] > 0)
         self.assertEqual((r["width"], r["height"]), (400, 300), "PNG dims must match the viewport")
-        png = decode_png(open(r["abspath"], "rb").read())
+        png = decode_png(pathlib.Path(r["abspath"]).read_bytes())
         self.assertEqual((png.width, png.height), (400, 300))
 
     def test_capture_is_not_blank(self):
         r = self.shot(html=read_fixture("solid.html"), width=320, height=240, name="notblank")
-        png = decode_png(open(r["abspath"], "rb").read())
+        png = decode_png(pathlib.Path(r["abspath"]).read_bytes())
         self.assertFalse(png.is_all_white(), "a solid-colour page must not render as all-white")
         # the fixture is solid #1133aa — the vast majority of pixels should be that blue
         self.assertGreater(png.fraction_matching((0x11, 0x33, 0xaa)), 0.9,
@@ -83,7 +83,7 @@ class PlaywrightOnlyTests(unittest.TestCase):
         self.assertEqual(r["backend"], "playwright")
         # #box is 200x120 in the fixture
         self.assertEqual((r["width"], r["height"]), (200, 120))
-        png = decode_png(open(r["abspath"], "rb").read())
+        png = decode_png(pathlib.Path(r["abspath"]).read_bytes())
         self.assertGreater(png.fraction_matching((0xcc, 0x22, 0x22)), 0.9,
                            "the clipped element should be (mostly) the box's red")
 
