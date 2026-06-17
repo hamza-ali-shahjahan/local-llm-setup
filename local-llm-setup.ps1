@@ -45,7 +45,7 @@ param(
   [switch]$Help
 )
 
-$AppVersion = '1.9.0'   # NB: not $Version — that name is the -Version switch param
+$AppVersion = '1.9.1'   # NB: not $Version — that name is the -Version switch param
 $Ctx = 8192             # default context window — big enough for real work, light on RAM
 $HomeDir = if ($env:USERPROFILE) { $env:USERPROFILE } else { $HOME }
 $ChatDir = Join-Path $HomeDir '.local-llm-setup\chat'   # where the chat page is written
@@ -1511,18 +1511,38 @@ class _Digest(HTMLParser):
         if self._abuf is not None: self._abuf.append(data)
         if self._in_style: self.styles.append(data)
 
+def _norm_color(c):
+    c = c.lower().strip()
+    m = re.fullmatch(r'#([0-9a-f]{8})', c)        # #rrggbbaa -> #rrggbb (collapse alpha variants)
+    if m: return "#" + m.group(1)[:6]
+    m = re.fullmatch(r'#([0-9a-f]{4})', c)        # #rgba -> #rgb
+    if m: return "#" + m.group(1)[:3]
+    return c
+
 def _palette(style_text):
-    return [c for c, _ in Counter(m.lower() for m in _COLOR_RE.findall(style_text)).most_common(16)]
+    return [c for c, _ in Counter(_norm_color(m) for m in _COLOR_RE.findall(style_text)).most_common(16)]
+
+# A font-family VALUE -> the first real font name. Resolves CSS vars: keeps a var's
+# inline fallback (var(--x, Inter, sans-serif) -> Inter), drops bare vars (var(--x)).
+def _clean_font(decl):
+    decl = re.sub(r'var\(\s*--[^,()]*,\s*([^()]*)\)', r'\1', decl)   # var with fallback -> fallback list
+    decl = re.sub(r'var\([^()]*\)', '', decl)                         # bare var -> drop
+    for tok in decl.split(","):
+        tok = tok.strip().strip('"\'')
+        if tok and not tok.lower().startswith("var("):
+            return tok[:60]
+    return ""
 
 def _fonts(style_text, font_links):
     out = []
-    for m in _FONT_RE.findall(style_text):
-        f = m.strip().strip('"\'')[:80]
-        if f and f.lower() not in (x.lower() for x in out): out.append(f)
+    def add(name):
+        name = (name or "").strip().strip('"\'')[:60]
+        if name and "fallback" not in name.lower() and name.lower() not in (x.lower() for x in out): out.append(name)
+    for m in re.findall(r'@font-face[^{}]*\{[^{}]*?font-family\s*:\s*([^;}{]+)', style_text, re.I): add(_clean_font(m))  # loaded fonts
+    for m in re.findall(r'--[\w-]*font[\w-]*\s*:\s*([^;}{]+)', style_text, re.I): add(_clean_font(m))                    # --font-* tokens
+    for decl in _FONT_RE.findall(style_text): add(_clean_font(decl))                                                    # font-family decls
     for href in font_links:
-        for fam in re.findall(r'family=([^&:]+)', href):
-            fam = fam.replace('+', ' ').strip()
-            if fam and fam.lower() not in (x.lower() for x in out): out.append(fam)
+        for fam in re.findall(r'family=([^&:]+)', href): add(fam.replace("+", " "))
     return out[:8]
 
 def _build_digest(d, base, extra_css=""):

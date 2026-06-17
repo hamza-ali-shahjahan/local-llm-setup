@@ -4,6 +4,20 @@ All notable changes to this project are documented here. Format based on
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/); this project aims to
 follow [Semantic Versioning](https://semver.org/).
 
+## [1.9.1] — 2026-06-17
+
+Polish on the v1.9.0 stylesheet extraction so the palette and fonts a clone is
+built from (and scored against) are clean on complex sites.
+
+### Fixed
+- **Palette normalization** — alpha-suffixed hex (`#rrggbbaa`, `#rgba`) is collapsed to
+  its base colour, so opacity variants no longer flood the palette and the real,
+  most-used colours surface (e.g. tailwindcss.com now shows its actual brand blues).
+- **Font extraction** — CSS-variable references are resolved (a var's inline fallback is
+  kept, bare vars dropped), `@font-face` and `--font-*` definitions are read for real font
+  names, and auto-generated "… Fallback" faces are filtered out. tailwindcss.com now yields
+  `inter`, `source`, `plexMono`, `ubuntuMono` instead of `var(--font-inter)` noise.
+
 ## [1.9.0] — 2026-06-17
 
 Makes cloning work on **real sites**, not just pages with inline styles. Found by
