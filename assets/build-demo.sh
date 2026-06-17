@@ -38,25 +38,35 @@ chmod +x "$WORK/shim/sysctl"
 export DEMO_SHIM="$WORK/shim"
 
 # --- left pane: the real installer (M4 via the shim above) -------------------------
+# A wrapper that clears, prints the pane header, then runs the real installer. Running
+# it from inside the (hidden) wrapper means the wrapper's own `clear` wipes the typed
+# command line, so the recording shows a clean header + real output — the same proven
+# pattern the Windows pane uses. The header is a caption, not faked installer output.
+cat > "$WORK/mac-run.sh" <<RUN
+#!/bin/bash
+cd "$REPO"
+clear
+printf '\033[1;38;5;45m  macOS / Linux \033[0m \033[2m· real run\033[0m\n\n'
+exec ./local-llm-setup.sh --dry-run
+RUN
+chmod +x "$WORK/mac-run.sh"
+
 cat > "$WORK/mac.tape" <<TAPE
 Output "$WORK/mac.mp4"
 Set Shell "bash"
 Set FontSize 14
 Set Width 700
-Set Height 460
+Set Height 520
 Set Padding 22
 Set Theme "Catppuccin Mocha"
-Set TypingSpeed 45ms
 Hide
 Type "export PATH=$DEMO_SHIM:\$PATH" Enter
 Type "export PS1='\$ '" Enter
 Type "clear" Enter
+Type "bash '$WORK/mac-run.sh'" Enter
+Sleep 1400ms
 Show
-Sleep 600ms
-Type "./local-llm-setup.sh --dry-run"
-Sleep 400ms
-Enter
-Sleep 6500ms
+Sleep 6000ms
 TAPE
 
 # --- right pane: the simulated PowerShell preview ----------------------------------
@@ -65,7 +75,7 @@ Output "$WORK/win.mp4"
 Set Shell "bash"
 Set FontSize 14
 Set Width 700
-Set Height 460
+Set Height 520
 Set Padding 22
 Set Theme "Catppuccin Mocha"
 Hide

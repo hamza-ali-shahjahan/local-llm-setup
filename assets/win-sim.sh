@@ -5,10 +5,12 @@
 esc=$'\033'
 RST="${esc}[0m"; BANNER="${esc}[30;43m"; PSC="${esc}[38;5;81m"
 GREEN="${esc}[32m"; DIM="${esc}[2m"; BOLD="${esc}[1m"; YEL="${esc}[33m"; GREY="${esc}[90m"
+HDR="${esc}[1;38;5;45m"
 pause(){ sleep "${1:-0.35}"; }
 
 clear
-# --- always-visible preview banner (stays pinned: content below fits the pane) ---
+# --- pane header + always-visible preview banner (both stay pinned: content fits) ---
+printf '%s  Windows %s %s· simulated preview%s\n' "$HDR" "$RST" "$DIM" "$RST"
 printf '%s PREVIEW · experimental · not yet verified on Windows — help us test %s\n' "$BANNER" "$RST"
 echo
 printf '%sPS C:\\Users\\you>%s .\\local-llm-setup.ps1 -DryRun\n' "$PSC" "$RST"
