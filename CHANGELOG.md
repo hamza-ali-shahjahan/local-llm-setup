@@ -4,6 +4,16 @@ All notable changes to this project are documented here. Format based on
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/); this project aims to
 follow [Semantic Versioning](https://semver.org/).
 
+## [1.10.1] — 2026-06-18
+
+### Fixed
+- **Cloning now recognizes the URL you'd actually type.** The clone trigger required a
+  full `https://…` URL, so `www.disrupt.com` or a bare `disrupt.com` silently fell back to
+  "build from imagination". It now accepts full URLs, `www.` hosts and bare domains
+  (normalizing to `https://`), while still ignoring real filenames like `index.html`.
+- **"clone …" works even with the Agent toggle on.** A clone request is now detected before
+  the Agent/Auto branch, so flipping Agent on no longer bypasses the observe-then-build flow.
+
 ## [1.10.0] — 2026-06-17
 
 Cloning gets **real depth**. Until now `inspect`/`extract` did a raw HTTP GET and
