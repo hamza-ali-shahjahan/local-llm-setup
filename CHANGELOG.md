@@ -4,6 +4,38 @@ All notable changes to this project are documented here. Format based on
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/); this project aims to
 follow [Semantic Versioning](https://semver.org/).
 
+## [1.10.0] — 2026-06-17
+
+Cloning gets **real depth**. Until now `inspect`/`extract` did a raw HTTP GET and
+parsed the source HTML — so a JavaScript-rendered site (most modern marketing
+pages) came back as an empty shell, and the only design signal was palette + fonts.
+Now, when a headless browser is present, the page is **rendered first** and the
+builder reads the page the way a human's browser sees it.
+
+### Added
+- **Render-based inspection (Phase 1).** `inspect`/`extract`/`score` now drive
+  Playwright's headless Chromium — `goto(networkidle)` then read the **rendered DOM**
+  and **computed styles**. JS-built sites (React/Next/Vue/etc.) finally read: real
+  headings, sections, the colours/fonts that actually paint. Same SSRF guard as the
+  raw fetch; falls back to the stdlib HTML fetch when no browser is available.
+- **Motion + tokens + states (Phase 2).** The digest now carries a **type scale, corner
+  radii, box-shadows and spacing**, the **motion language** (CSS `@keyframes`,
+  animations, transitions), **hover interaction states** (computed-style deltas on the
+  top interactive elements), **responsive breakpoint** signals (390/768/1280) and a
+  **framework guess** (Tailwind/Bootstrap/Next/React/Vue/Alpine). All of it is fed into
+  the clone build spec, so the coder reproduces the animations and feel, not just colours.
+- **Fidelity scores motion + tokens (Phase 3).** `score` now weights motion overlap and
+  design-token overlap alongside palette/fonts/sections/copy, and reports
+  `motion_match`, `token_match` and `missing_animations`. The self-correct loop uses
+  these to tell the model exactly which animations/tokens to add. A clone that drops the
+  page's animations can no longer score 100%.
+
+### Tested
+- New `tests/test_clone_depth.py` (10 tests, offline + headless): proves a JS-rendered
+  fixture reads only via the browser path (the raw parse is blind to it), that motion /
+  tokens / hover states / breakpoints are captured, and that fidelity docks a partial
+  clone for missing animations. Full suite: **29 tests green**.
+
 ## [1.9.1] — 2026-06-17
 
 Polish on the v1.9.0 stylesheet extraction so the palette and fonts a clone is

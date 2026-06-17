@@ -29,7 +29,7 @@
 #   ./local-llm-setup.sh --help
 #
 set -euo pipefail
-VERSION="1.9.1"
+VERSION="1.10.0"
 
 # ----------------------------------------------------------------------------
 # Pretty output (degrades gracefully if the terminal has no color)
@@ -617,11 +617,11 @@ const AGENT_SYSTEM =
   "<write path=\"rel/path\">\nfile contents\n</write>  — write a workspace file\n" +
   "<read path=\"rel/path\">  — read a workspace file\n" +
   "<fetch url=\"https://...\">  — fetch a public web page's raw HTML\n" +
-  "<inspect url=\"https://...\">  — a STRUCTURED digest of a page: title, sections, headings, links, images, the real colour palette and font families\n" +
-  "<extract url=\"https://...\">  — just a page's design tokens (palette + fonts)\n" +
+  "<inspect url=\"https://...\">  — a STRUCTURED digest of a page. When a headless browser is present it RENDERS the page (so JavaScript-built sites read correctly), returning title, sections, headings, links, images, the real computed colour palette + fonts, the type scale / radii / shadows, the motion (CSS @keyframes + animations + transitions), hover states, responsive breakpoints and a framework guess\n" +
+  "<extract url=\"https://...\">  — a page's design tokens (palette, fonts, type scale, radii, shadows, spacing) plus its motion and framework\n" +
   "<screenshot url=\"https://...\">  — render a page in a headless browser (Playwright's managed Chromium, installed on demand) and capture a PNG\n" +
   "<gitsync path=\".\" message=\"...\">  — turn the workspace project into a real local git repo (git init + .gitignore + commit) and export a .zip with the .git history. Pushing to GitHub stays yours to do (your own token).\n" +
-  "To CLONE or recreate a real website, FIRST <inspect url=\"...\"> to observe its real structure, palette and fonts — never invent them — then write the page to match those exact colours, fonts and sections. " +
+  "To CLONE or recreate a real website, FIRST <inspect url=\"...\"> to observe its real structure, palette, fonts, design tokens AND its animations/hover states — never invent them — then write the page to match those exact colours, fonts, sections, tokens and motion. " +
   "Use the result to decide the next step. " +
   "Narrate like a careful engineer thinking out loud: before each tool call, say in ONE short line what you're about to do and why. " +
   "After each <result>, ASSESS it honestly — if it failed, came back empty, or looks wrong, name the problem AND why in one line, say how you'll fix it, then do the fix. " +
@@ -712,7 +712,23 @@ function cloneSpecFromDigest(d) {
   if (d.headings && d.headings.length) L.push("Real headings / copy to reuse:\n" + d.headings.slice(0, 16).map(h => "• (" + h.level + ") " + h.text).join("\n"));
   if (d.nav_links && d.nav_links.length) { const nav = d.nav_links.map(l => l.text).filter(Boolean).slice(0, 8); if (nav.length) L.push("Nav items: " + nav.join(" · ")); }
   if (d.counts && d.counts.images) L.push("It has ~" + d.counts.images + " images — use https://picsum.photos/seed/NAME/W/H placeholders in those spots.");
-  L.push("Match the layout, spacing and visual hierarchy as closely as you can. Make it responsive.");
+  const t = d.tokens || {};
+  if (t.font_sizes && t.font_sizes.length) L.push("Type scale (font sizes in use): " + t.font_sizes.join(" · "));
+  if (t.radii && t.radii.length) L.push("Corner radii to match: " + t.radii.join(" · "));
+  if (t.shadows && t.shadows.length) L.push("Box-shadows to match: " + t.shadows.slice(0, 4).join("  |  "));
+  if (t.spacing && t.spacing.length) L.push("Common spacing values (padding/margin): " + t.spacing.join(" · "));
+  const m = d.motion || {};
+  if ((m.keyframes && m.keyframes.length) || (m.animations && m.animations.length)) {
+    L.push("Reproduce these ANIMATIONS with CSS @keyframes — name + duration: "
+      + (m.animations && m.animations.length ? m.animations.join(" · ") : (m.keyframes || []).join(" · ")));
+  }
+  if (m.transitions && m.transitions.length) L.push("Add these hover/transition effects: " + m.transitions.slice(0, 6).join(" · "));
+  if (d.states && d.states.length) {
+    L.push("Interactive hover states to recreate:\n" + d.states.slice(0, 5).map(s =>
+      "• \"" + s.el + "\" on hover -> " + Object.entries(s.hover_changes || {}).map(c => c[0] + ": " + (c[1][0]) + " → " + (c[1][1])).join(", ")).join("\n"));
+  }
+  if (d.framework && d.framework.length) L.push("The original appears built with: " + d.framework.join(", ") + " (match the visual result, not the framework).");
+  L.push("Match the layout, spacing, visual hierarchy AND the motion/hover feel as closely as you can. Make it responsive.");
   return L.join("\n");
 }
 // human label for a model: "qwen2.5-coder · 14B · Coder"
@@ -873,7 +889,9 @@ function fidelityCard(sc, from) {
   const trail = (from != null && from !== sc.score) ? ' <span class="meta">(&#8593; from ' + from + '%)</span>' : '';
   let h = '<div class="tasks" style="margin-top:9px"><div class="tk"><span class="tki" style="border:0;color:' + tone + '">&#9678;</span>'
     + '<span><b>Clone fidelity: <span style="color:' + tone + '">' + sc.score + '%</span></b>' + trail + ' '
-    + '<span class="meta">palette ' + sc.palette_match + '% · fonts ' + sc.font_match + '% · sections ' + sc.section_coverage + '% · copy ' + sc.heading_match + '%</span></span></div>';
+    + '<span class="meta">palette ' + sc.palette_match + '% · fonts ' + sc.font_match + '% · sections ' + sc.section_coverage + '% · copy ' + sc.heading_match + '%'
+    + (typeof sc.motion_match === "number" ? ' · motion ' + sc.motion_match + '%' : '')
+    + (typeof sc.token_match === "number" ? ' · tokens ' + sc.token_match + '%' : '') + '</span></span></div>';
   if (sc.missing_colors && sc.missing_colors.length)
     h += '<div class="tk tk-queued"><span class="tki"></span><span class="meta">unused original colours: ' + sc.missing_colors.join(", ") + '</span></div>';
   return h + "</div>";
@@ -891,6 +909,8 @@ function improvePrompt(sc) {
   if (sc.missing_colors && sc.missing_colors.length) L.push("- Use these EXACT colours from the original that you haven't used yet: " + sc.missing_colors.join(", ") + " — apply them to backgrounds, text, buttons and accents where they fit.");
   if (sc.missing_fonts && sc.missing_fonts.length) L.push("- Use these fonts from the original (load from Google Fonts if needed): " + sc.missing_fonts.join(", ") + ".");
   if (sc.sections_clone < sc.sections_original) L.push("- The original has ~" + sc.sections_original + " main sections; yours has " + sc.sections_clone + " — add the missing structural sections (nav, hero, features, footer, etc.).");
+  if (sc.missing_animations && sc.missing_animations.length) L.push("- The original animates (" + sc.missing_animations.join(", ") + ") but your clone is static — add matching CSS @keyframes animations and hover transitions.");
+  if (typeof sc.token_match === "number" && sc.token_match < 70) L.push("- Match the original's corner radii, box-shadows and type scale more closely (your design tokens are off).");
   L.push("Output the COMPLETE updated HTML file in ONE ```html block. Keep everything that already works; only close these gaps.");
   return L.join("\n");
 }
@@ -1430,11 +1450,15 @@ write_agent_server() {
 #   POST /api/agent/read  {path}      -> read a file UNDER the workspace dir          (read-only)
 #   POST /api/agent/fetch {url}       -> fetch a public web page (raw HTML, capped)   (read-only, network)
 #   POST /api/agent/inspect {url|html}-> structured digest: title, sections, headings,
-#                                        links, images, palette, fonts                (read-only)
-#   POST /api/agent/extract {url}     -> just the design tokens: palette + fonts       (read-only, network)
+#                                        links, images, palette, fonts; when a headless
+#                                        browser is present it RENDERS the page (JS sites
+#                                        read), adding computed tokens, motion, framework,
+#                                        hover states + responsive breakpoints   (read-only)
+#   POST /api/agent/extract {url}     -> design tokens: palette, fonts, type scale, radii,
+#                                        shadows, spacing + motion + framework      (read-only, network)
 #   POST /api/agent/score {a,b}       -> design-fidelity score between two pages       (read-only)
 #                                        (each of a/b is {url} or {html}) — palette/font/
-#                                        section/heading overlap -> 0-100 + deltas.
+#                                        section/heading/motion/token overlap -> 0-100 + deltas.
 #                                        NB: structural, not pixel — local models aren't vision.
 #   POST /api/agent/screenshot {url|html} -> render in a headless browser -> PNG       (read-only)
 #                                        Playwright (managed Chromium) first, then a
@@ -1629,20 +1653,229 @@ def _fetch_stylesheets(links, max_sheets=4, cap=600_000):
             continue
     return "\n".join(css), len(css)
 
+# ============================================================================
+# Render-based inspection (the depth unlock). The stdlib fetch() above only sees
+# RAW HTML — useless on a JS-rendered site (an empty <div id=root> shell). When
+# Playwright is present we drive a real headless browser instead: load the page,
+# wait for the network to settle, then read the RENDERED DOM + the *computed*
+# styles, the motion language (@keyframes / animations / transitions), hover/focus
+# interaction states, responsive breakpoints, and a framework guess. digest()
+# prefers this path and falls back to the raw fetch when the browser is missing.
+# ============================================================================
+
+# One self-contained snippet evaluated IN the page. Walks the rendered DOM (capped),
+# aggregates the design tokens that actually paint, and mines the live stylesheets
+# for motion. Pure browser JS — also runnable on set_content() HTML for offline tests.
+_BROWSER_EXTRACT_JS = r"""() => {
+  const MAX = 4000;
+  const els = Array.from(document.querySelectorAll('*')).slice(0, MAX);
+  const C={}, BG={}, F={}, SZ={}, RAD={}, SH={}, SP={};
+  const bump=(m,k)=>{ if(k==null) return; k=(''+k).trim();
+    if(!k||k==='none'||k==='normal'||k==='0px'||k==='auto'||k==='rgba(0, 0, 0, 0)') return; m[k]=(m[k]||0)+1; };
+  const vis=(e,s)=>{ const r=e.getBoundingClientRect();
+    return r.width>1 && r.height>1 && s.visibility!=='hidden' && s.display!=='none' && parseFloat(s.opacity||'1')>0.05; };
+  const anim=new Set(), trans=new Set();
+  let visible=0;
+  for (const e of els){
+    let s; try{ s=getComputedStyle(e); }catch(_){ continue; }
+    if(!vis(e,s)) continue;
+    visible++;
+    bump(C, s.color); bump(BG, s.backgroundColor);
+    if(s.backgroundImage && s.backgroundImage!=='none') bump(BG, s.backgroundImage.slice(0,140));
+    bump(F, (s.fontFamily||'').split(',')[0].replace(/["']/g,'').trim());
+    bump(SZ, s.fontSize); bump(RAD, s.borderRadius);
+    if(s.boxShadow && s.boxShadow!=='none') bump(SH, s.boxShadow.slice(0,140));
+    bump(SP, s.paddingTop); bump(SP, s.marginBottom);
+    if(s.animationName && s.animationName!=='none') anim.add((s.animationName+' '+(s.animationDuration||'')).trim());
+    if(s.transitionDuration && s.transitionDuration!=='0s') trans.add(((s.transitionProperty||'all')+' '+s.transitionDuration).trim());
+  }
+  const top=(m,n)=>Object.entries(m).sort((a,b)=>b[1]-a[1]).slice(0,n).map(x=>x[0]);
+  // motion: @keyframes names from every reachable (same-origin) stylesheet
+  const keyframes=new Set();
+  for(const ss of Array.from(document.styleSheets)){
+    let rules; try{ rules=ss.cssRules; }catch(_){ continue; }   // cross-origin sheet -> skip
+    if(!rules) continue;
+    for(const r of Array.from(rules)){
+      try{
+        if(r.type===7 || (r.name!=null && /@keyframes/i.test(r.cssText||''))) keyframes.add(r.name);
+        else if(r.style){
+          if(r.style.animationName && r.style.animationName!=='none') anim.add((r.style.animationName+' '+(r.style.animationDuration||'')).trim());
+          const tp=r.style.transitionProperty;
+          if(tp && tp!=='none' && tp!=='all') trans.add((tp+' '+(r.style.transitionDuration||'')).trim());
+        }
+      }catch(_){}
+    }
+  }
+  // framework guess from class soup + well-known roots
+  const cls=(document.body?document.body.className+' ':'')+
+    Array.from(document.querySelectorAll('[class]')).slice(0,500).map(e=>(''+e.className)).join(' ');
+  const fw=[];
+  if(/\b(?:flex|grid|p[xy]?-\d|m[xy]?-\d|gap-\d|text-(?:xs|sm|base|lg|\dxl)|bg-\w+-\d{2,3}|rounded(?:-\w+)?)\b/.test(cls)) fw.push('tailwind');
+  if(/\b(?:container|row|col-(?:xs|sm|md|lg|\d)|navbar|btn-(?:primary|secondary|outline))\b/.test(cls)) fw.push('bootstrap');
+  if(window.__NEXT_DATA__||document.querySelector('#__next')) fw.push('next.js');
+  if(document.querySelector('#root,[data-reactroot]')) fw.push('react');
+  if(document.querySelector('[data-v-app],[data-server-rendered]')) fw.push('vue');
+  if(document.querySelector('[x-data],[wire\\:id]')) fw.push('alpine/livewire');
+  return {
+    visible_elements: visible,
+    colors: top(C,12), backgrounds: top(BG,10), fonts: top(F,8),
+    font_sizes: top(SZ,8), radii: top(RAD,6), shadows: top(SH,6), spacing: top(SP,8),
+    motion: { keyframes: Array.from(keyframes).filter(Boolean).slice(0,24),
+              animations: Array.from(anim).filter(Boolean).slice(0,24),
+              transitions: Array.from(trans).filter(Boolean).slice(0,24) },
+    framework: Array.from(new Set(fw)),
+  };
+}"""
+
+# Phase 2 — interaction states: hover/focus the top interactive elements and diff
+# the computed style, so the clone can reproduce :hover/:focus affordances.
+def _interaction_states(page, max_els=6):
+    out = []
+    try:
+        handles = page.query_selector_all("a, button, [role=button], input[type=submit], .btn")
+    except Exception:
+        return out
+    probe = ("e=>{const s=getComputedStyle(e);return {bg:s.backgroundColor,color:s.color,"
+             "transform:s.transform,boxShadow:s.boxShadow,opacity:s.opacity,textDecorationLine:s.textDecorationLine};}")
+    for h in handles[:max_els]:
+        try:
+            before = h.evaluate(probe)
+            h.hover(timeout=1000)
+            page.wait_for_timeout(140)
+            after = h.evaluate(probe)
+            delta = {k: [before.get(k), after.get(k)] for k in after if before.get(k) != after.get(k)}
+            if delta:
+                label = h.evaluate("e=>((e.innerText||e.value||e.tagName)+'').trim().slice(0,40)")
+                out.append({"el": label, "hover_changes": delta})
+        except Exception:
+            continue
+    return out
+
+# Phase 2 — responsive: re-flow at a few widths and capture the layout signal
+# (does the nav collapse? does a hamburger appear? does the page overflow?).
+def _responsive(page, widths=(390, 768, 1280)):
+    out = {}
+    sig_js = ("()=>({scrollW:document.documentElement.scrollWidth,"
+              "nav_links:document.querySelectorAll('nav a, header a').length,"
+              "hamburger:!!document.querySelector('[class*=hamburger i],[class*=menu-toggle i],"
+              "[aria-label*=menu i],button[class*=menu i]'),"
+              "body_dir:document.body?getComputedStyle(document.body).flexDirection:''})")
+    for w in widths:
+        try:
+            page.set_viewport_size({"width": w, "height": 900})
+            page.wait_for_timeout(160)
+            out[str(w)] = page.evaluate(sig_js)
+        except Exception:
+            continue
+    return out
+
+# Run the extraction against an already-loaded page. `deep` adds the hover +
+# responsive passes (they mutate the page, so they run last).
+def _extract_with_page(page, deep=True):
+    data = page.evaluate(_BROWSER_EXTRACT_JS)
+    html = page.content()
+    if deep:
+        try: data["states"] = _interaction_states(page)
+        except Exception: data["states"] = []
+        try: data["responsive"] = _responsive(page)
+        except Exception: data["responsive"] = {}
+    return html, data
+
+def _render_inspect(url, deep=True, timeout_ms=20000):
+    """Load `url` in headless Chromium and return (final_url, rendered_html, data).
+    SSRF-guarded exactly like fetch(). Raises if Playwright isn't importable."""
+    from playwright.sync_api import sync_playwright
+    p2 = urlsplit(url)
+    if p2.scheme not in ("http", "https"): raise ValueError("only http/https URLs are allowed")
+    _assert_public(p2.hostname)
+    with sync_playwright() as p:
+        browser = p.chromium.launch(args=["--no-sandbox"])
+        try:
+            page = browser.new_page(viewport={"width": 1280, "height": 900}, user_agent=UA)
+            try: page.goto(url, wait_until="networkidle", timeout=timeout_ms)
+            except Exception: page.goto(url, wait_until="load", timeout=timeout_ms)
+            final = page.url
+            html, data = _extract_with_page(page, deep=deep)
+            return final, html, data
+        finally:
+            browser.close()
+
+def _inspect_html_via_browser(html, deep=False):
+    """Render an HTML STRING in the browser (no network) and extract from it.
+    Used for inline {html} targets and for the offline test suite."""
+    from playwright.sync_api import sync_playwright
+    with sync_playwright() as p:
+        browser = p.chromium.launch(args=["--no-sandbox"])
+        try:
+            page = browser.new_page(viewport={"width": 1280, "height": 900})
+            page.set_content(html, wait_until="networkidle")
+            return _extract_with_page(page, deep=deep)
+        finally:
+            browser.close()
+
+# Fold the browser-extracted tokens/motion onto a stdlib digest. Computed colours
+# and fonts are authoritative (they actually painted), so they lead the palette.
+def _merge_rendered(out, data):
+    comp = []
+    for c in (data.get("colors") or []) + (data.get("backgrounds") or []):
+        c = (c or "").strip()
+        if c.startswith(("rgb", "#", "hsl")):
+            comp.append(_norm_color(c))
+    if comp:
+        seen = []
+        for c in comp:
+            if c and c not in seen: seen.append(c)
+        out["palette"] = (seen + [c for c in out.get("palette", []) if c not in seen])[:16]
+    ff = [f for f in (data.get("fonts") or []) if f]
+    if ff:
+        out["fonts"] = (ff + [f for f in out.get("fonts", []) if f.lower() not in (x.lower() for x in ff)])[:8]
+    out["tokens"] = {"font_sizes": data.get("font_sizes", []), "radii": data.get("radii", []),
+                     "shadows": data.get("shadows", []), "spacing": data.get("spacing", []),
+                     "backgrounds": data.get("backgrounds", [])}
+    out["motion"] = data.get("motion", {}) or {}
+    out["framework"] = data.get("framework", [])
+    out["states"] = data.get("states", [])
+    out["responsive"] = data.get("responsive", {})
+    out["visible_elements"] = data.get("visible_elements", 0)
+
 def _digest_html(html, base=""):
     d = _Digest(base)
     try: d.feed(html)
     except Exception: pass
-    return _build_digest(d, base)
+    out = _build_digest(d, base)
+    out["rendered"] = False
+    if _have_playwright():
+        try:
+            _rhtml, data = _inspect_html_via_browser(html, deep=False)
+            _merge_rendered(out, data)
+            out["rendered"] = True
+        except Exception:
+            pass
+    return out
 
 def digest(url):
+    # Preferred path: a real headless render, so JS-built sites actually read.
+    if _have_playwright():
+        try:
+            final, html, data = _render_inspect(url, deep=True)
+            d = _Digest(final)
+            try: d.feed(html)
+            except Exception: pass
+            ext_css, n = _fetch_stylesheets(d.css_links)
+            out = _build_digest(d, final, ext_css)
+            _merge_rendered(out, data)
+            out.update({"status": 200, "truncated": False, "stylesheets_parsed": n, "rendered": True})
+            return out
+        except Exception:
+            pass   # browser missing / nav failed / blocked -> fall back to raw fetch
+    # Fallback: stdlib fetch of raw HTML (no JS) — better than nothing.
     f = fetch(url)
     d = _Digest(f["final_url"])
     try: d.feed(f["html"])
     except Exception: pass
     ext_css, n = _fetch_stylesheets(d.css_links)
     out = _build_digest(d, f["final_url"], ext_css)
-    out.update({"status": f["status"], "truncated": f["truncated"], "stylesheets_parsed": n})
+    out.update({"status": f["status"], "truncated": f["truncated"], "stylesheets_parsed": n, "rendered": False})
     return out
 
 def target_digest(obj):
@@ -1653,22 +1886,44 @@ def target_digest(obj):
 # ---------- fidelity score (structural; not pixels — local models aren't vision) ----------
 def _norm(xs): return set(x.lower().strip() for x in xs if x and x.strip())
 
+# Motion fingerprint of a digest: keyframe names + the animation NAMES in use
+# (the first token of each "name duration" entry), lower-cased.
+def _motion_set(x):
+    m = x.get("motion", {}) or {}
+    names = set(m.get("keyframes", []) or [])
+    names |= set((a.split() or [""])[0] for a in (m.get("animations", []) or []))
+    return _norm(names)
+
+# Token fingerprint: the discrete design tokens that should match across a clone —
+# corner radii, shadows and the type scale.
+def _token_set(x):
+    t = x.get("tokens", {}) or {}
+    return _norm((t.get("radii") or []) + (t.get("shadows") or []) + (t.get("font_sizes") or []))
+
 def fidelity(a, b):
     pa, pb = _norm(a["palette"]), _norm(b["palette"])
     fa, fb = _norm(a["fonts"]), _norm(b["fonts"])
     ha, hb = _norm(h["text"] for h in a["headings"]), _norm(h["text"] for h in b["headings"])
+    ma, mb = _motion_set(a), _motion_set(b)
+    ta, tb = _token_set(a), _token_set(b)
     pal = len(pa & pb) / len(pa) if pa else (1.0 if not pb else 0.0)
     fon = len(fa & fb) / len(fa) if fa else 1.0
     secA, secB = len(a["sections"]), len(b["sections"])
     sec = min(secB, secA) / secA if secA else 1.0
     head = len(ha & hb) / len(ha) if ha else 1.0
-    score = round(100 * (0.35 * pal + 0.25 * fon + 0.20 * sec + 0.20 * head))
+    # motion / tokens only count when the original HAS them; otherwise neutral (1.0)
+    # so a token-less or browser-less digest scores exactly as before.
+    mot = len(ma & mb) / len(ma) if ma else 1.0
+    tok = len(ta & tb) / len(ta) if ta else 1.0
+    score = round(100 * (0.28 * pal + 0.18 * fon + 0.16 * sec + 0.14 * head + 0.14 * mot + 0.10 * tok))
     return {
         "score": score,
         "palette_match": round(pal * 100), "font_match": round(fon * 100),
         "section_coverage": round(sec * 100), "heading_match": round(head * 100),
+        "motion_match": round(mot * 100), "token_match": round(tok * 100),
         "missing_colors": [c for c in a["palette"] if c.lower() not in pb][:8],
         "missing_fonts": [f for f in a["fonts"] if f.lower() not in fb][:5],
+        "missing_animations": sorted(ma - mb)[:8],
         "sections_original": secA, "sections_clone": secB,
     }
 
@@ -2074,7 +2329,11 @@ class H(BaseHTTPRequestHandler):
                 d = digest((req.get("url") or "").strip())
                 return self._json(200, {"ok": True, "url": d["url"], "title": d["title"],
                                         "palette": d["palette"], "fonts": d["fonts"],
-                                        "sections": [s["tag"] for s in d["sections"]][:20]})
+                                        "sections": [s["tag"] for s in d["sections"]][:20],
+                                        "tokens": d.get("tokens", {}), "motion": d.get("motion", {}),
+                                        "framework": d.get("framework", []),
+                                        "states": d.get("states", []), "responsive": d.get("responsive", {}),
+                                        "rendered": d.get("rendered", False)})
             except Exception as e:
                 return self._json(200, {"ok": False, "error": str(e)})
         if path.startswith("/api/agent/score"):
