@@ -1,22 +1,37 @@
+<div align="center">
+
+<br>
+
 # local-llm-setup
 
-**Zero to a running local LLM on your Mac, Linux, or Windows machine — in one command.**
+**Zero to a running local LLM — in one command.**
+
+<sub>macOS&nbsp; · &nbsp;Linux&nbsp; · &nbsp;Windows&nbsp; · &nbsp;no prior knowledge required</sub>
+
+<br>
+
+[![ShellCheck](https://github.com/hamza-ali-shahjahan/local-llm-setup/actions/workflows/shellcheck.yml/badge.svg)](https://github.com/hamza-ali-shahjahan/local-llm-setup/actions/workflows/shellcheck.yml) [![Linux smoke test](https://github.com/hamza-ali-shahjahan/local-llm-setup/actions/workflows/linux-smoke.yml/badge.svg)](https://github.com/hamza-ali-shahjahan/local-llm-setup/actions/workflows/linux-smoke.yml) [![Windows smoke test](https://github.com/hamza-ali-shahjahan/local-llm-setup/actions/workflows/windows-smoke.yml/badge.svg)](https://github.com/hamza-ali-shahjahan/local-llm-setup/actions/workflows/windows-smoke.yml) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) ![Platform: macOS + Linux + Windows](https://img.shields.io/badge/platform-macOS%20%2B%20Linux%20%2B%20Windows-lightgrey.svg)
+
+<br>
+<br>
+
+<img src="assets/demo.gif" alt="local-llm-setup auto-detecting the machine and recommending a model plan sized to its memory" width="760">
+
+<br>
+
+<sub><em>One command reads your hardware and proposes a model plan that fits — shown here as a <code>--dry-run</code>, so nothing is installed or downloaded.</em></sub>
+
+<br>
+
+</div>
+
+<!-- Hero visual above is a real terminal recording (assets/demo.gif, rendered from assets/demo.tape via vhs). Re-record with `vhs assets/demo.tape` to refresh. -->
+
+---
 
 Setting up a local AI model the normal way takes **a dozen manual steps and a pile of decisions**: which runtime, which model, will it fit your RAM, what "quantization" means, how to set a context window, how to test it. Miss one and you're stuck.
 
 This collapses all of it into **one command that asks you nothing it can figure out for itself** — and you don't need to know what any of it means. It checks you have the disk space before downloading, sizes the model to your GPU when you have one, and — the moment it's done — offers to open a chat in your browser and set up AI in your editor.
-
-[![ShellCheck](https://github.com/hamza-ali-shahjahan/local-llm-setup/actions/workflows/shellcheck.yml/badge.svg)](https://github.com/hamza-ali-shahjahan/local-llm-setup/actions/workflows/shellcheck.yml)
-[![Linux smoke test](https://github.com/hamza-ali-shahjahan/local-llm-setup/actions/workflows/linux-smoke.yml/badge.svg)](https://github.com/hamza-ali-shahjahan/local-llm-setup/actions/workflows/linux-smoke.yml)
-[![Windows smoke test](https://github.com/hamza-ali-shahjahan/local-llm-setup/actions/workflows/windows-smoke.yml/badge.svg)](https://github.com/hamza-ali-shahjahan/local-llm-setup/actions/workflows/windows-smoke.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-![Platform: macOS + Linux + Windows](https://img.shields.io/badge/platform-macOS%20%2B%20Linux%20%2B%20Windows-lightgrey.svg)
-
-<p align="center">
-  <img src="assets/demo.gif" alt="local-llm-setup auto-detecting the machine and recommending a model plan sized to its memory" width="760">
-</p>
-
-<p align="center"><em>One command reads your hardware and proposes a model plan that fits — shown here as a <code>--dry-run</code>, so nothing is installed or downloaded.</em></p>
 
 ### From 12 steps to 1
 
