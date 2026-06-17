@@ -45,7 +45,7 @@ param(
   [switch]$Help
 )
 
-$AppVersion = '1.10.0'   # NB: not $Version — that name is the -Version switch param
+$AppVersion = '1.10.1'   # NB: not $Version — that name is the -Version switch param
 $Ctx = 8192             # default context window — big enough for real work, light on RAM
 $HomeDir = if ($env:USERPROFILE) { $env:USERPROFILE } else { $HOME }
 $ChatDir = Join-Path $HomeDir '.local-llm-setup\chat'   # where the chat page is written
@@ -657,10 +657,15 @@ function route(text) {
   const newAppRe = /\b(start over|from scratch|scratch|rebuild|new (app|page|project|website|site|design|one|build)|different (app|page|thing)|instead build|build a new|another (app|page)|scrap (it|this))\b/;
   const trivial = text.length < 28 && !/\b(with|that|and|including|plus|featuring|like)\b/i.test(t);
   const hasApp = !!currentApp;
-  // clone intent: a URL + a recreate verb, with the tool server available -> observe then build
-  const urlM = text.match(/https?:\/\/[^\s)"'<>]+/i);
+  // clone intent: a recreate verb + a URL — full (https://…), www.…, or a bare domain
+  // (disrupt.com), normalised to https://. Skip things that are really filenames (index.html).
+  const urlM = text.match(/(?:https?:\/\/)?(?:www\.)?[a-z0-9][a-z0-9-]*(?:\.[a-z0-9-]+)*\.[a-z]{2,24}(?:\/[^\s)"'<>]*)?/i);
+  const looksLikeFile = urlM && !/^https?:\/\//i.test(urlM[0]) && /^[^/]*\.(html?|css|jsx?|tsx?|json|py|md|txt|png|jpe?g|gif|svg|webp|sh|ya?ml|xml|csv|zip|pdf|lock|log)(?:[/?#]|$)/i.test(urlM[0]);
   const cloneIntent = /\b(clone|recreate|replicate|reproduce|rebuild|copy|mimic|inspired by|like (this|the)|same as)\b/.test(t);
-  if (urlM && cloneIntent && agentReady) return { kind: "build", model: bestCoder, plan: false, cloneUrl: urlM[0] };
+  if (urlM && !looksLikeFile && cloneIntent && agentReady) {
+    let u = urlM[0]; if (!/^https?:\/\//i.test(u)) u = "https://" + u;
+    return { kind: "build", model: bestCoder, plan: false, cloneUrl: u };
+  }
   // a clear non-build question -> the reasoner answers (with or without an app)
   if (reasonRe.test(t) && !hasBuildWord.test(t)) return { kind: "reason", model: bestReasoner || bestCoder, plan: false };
   // app already on screen -> iterate on it (fast, no re-plan), unless they ask to start fresh
@@ -1227,8 +1232,10 @@ async function send() {
   let body = null;
   // ---- route: which brain, and do we plan first? ----
   const agentRun = agentChk.checked && agentReady;
-  const r = (autoMode && !agentRun)
-    ? route(text)
+  const auto = route(text);                                       // also detects a "clone <url>" request
+  const r = auto.cloneUrl
+    ? auto                                                        // a clone request always clones — even with Agent on
+    : (autoMode && !agentRun) ? auto
     : { kind: agentRun ? "agent" : (currentApp ? "edit" : "build"), model: currentModel || bestCoder, plan: false };
   try {
     if (agentRun) {
