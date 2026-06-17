@@ -45,7 +45,7 @@ param(
   [switch]$Help
 )
 
-$AppVersion = '1.8.0'   # NB: not $Version — that name is the -Version switch param
+$AppVersion = '1.9.0'   # NB: not $Version — that name is the -Version switch param
 $Ctx = 8192             # default context window — big enough for real work, light on RAM
 $HomeDir = if ($env:USERPROFILE) { $env:USERPROFILE } else { $HOME }
 $ChatDir = Join-Path $HomeDir '.local-llm-setup\chat'   # where the chat page is written
@@ -1472,7 +1472,7 @@ class _Digest(HTMLParser):
         self.base = base
         self.title = ""; self.desc = ""
         self.headings = []; self.links = []; self.images = []
-        self.sections = []; self.styles = []; self.font_links = []
+        self.sections = []; self.styles = []; self.font_links = []; self.css_links = []
         self._in_title = False; self._in_style = False
         self._h = None; self._htext = []
         self._abuf = None; self._ahref = None
@@ -1487,7 +1487,9 @@ class _Digest(HTMLParser):
         elif tag == "img" and a.get("src"): self.images.append({"src": urljoin(self.base, a["src"]), "alt": (a.get("alt") or "")[:80]})
         elif tag == "style": self._in_style = True
         elif tag == "link" and "stylesheet" in (a.get("rel", "") or "").lower():
-            if "fonts.googleapis" in a.get("href", ""): self.font_links.append(a["href"])
+            href = a.get("href", "")
+            if "fonts.googleapis" in href: self.font_links.append(href)
+            elif href: self.css_links.append(urljoin(self.base, href))
         if tag in ("section", "header", "footer", "nav", "main", "article", "aside") or a.get("id"):
             self.sections.append({"tag": tag, "id": (a.get("id") or "")[:40], "class": (a.get("class") or "")[:80]})
         if a.get("style"): self.styles.append(a["style"])
@@ -1523,11 +1525,8 @@ def _fonts(style_text, font_links):
             if fam and fam.lower() not in (x.lower() for x in out): out.append(fam)
     return out[:8]
 
-def _digest_html(html, base=""):
-    d = _Digest(base)
-    try: d.feed(html)
-    except Exception: pass
-    style_text = "\n".join(d.styles)
+def _build_digest(d, base, extra_css=""):
+    style_text = "\n".join(d.styles) + ("\n" + extra_css if extra_css else "")
     return {
         "url": base,
         "title": d.title.strip()[:200], "description": (d.desc or "")[:300],
@@ -1537,10 +1536,39 @@ def _digest_html(html, base=""):
         "counts": {"links": len(d.links), "images": len(d.images), "sections": len(d.sections)},
     }
 
+# Fetch a few linked stylesheets so palette/fonts come from the REAL CSS — most modern
+# sites keep their colours/fonts in external .css files, not inline. SSRF-guarded + capped.
+def _fetch_stylesheets(links, max_sheets=4, cap=600_000):
+    css, seen = [], set()
+    for href in links:
+        if len(css) >= max_sheets: break
+        if href in seen: continue
+        seen.add(href)
+        try:
+            p = urlsplit(href)
+            if p.scheme not in ("http", "https"): continue
+            _assert_public(p.hostname)
+            req = urllib.request.Request(href, headers={"User-Agent": UA, "Accept": "text/css,*/*"})
+            with _OPENER.open(req, timeout=8) as r:
+                css.append(r.read(cap).decode("utf-8", "replace"))
+        except Exception:
+            continue
+    return "\n".join(css), len(css)
+
+def _digest_html(html, base=""):
+    d = _Digest(base)
+    try: d.feed(html)
+    except Exception: pass
+    return _build_digest(d, base)
+
 def digest(url):
     f = fetch(url)
-    out = _digest_html(f["html"], f["final_url"])
-    out.update({"status": f["status"], "truncated": f["truncated"]})
+    d = _Digest(f["final_url"])
+    try: d.feed(f["html"])
+    except Exception: pass
+    ext_css, n = _fetch_stylesheets(d.css_links)
+    out = _build_digest(d, f["final_url"], ext_css)
+    out.update({"status": f["status"], "truncated": f["truncated"], "stylesheets_parsed": n})
     return out
 
 def target_digest(obj):

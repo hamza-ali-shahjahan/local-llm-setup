@@ -4,6 +4,26 @@ All notable changes to this project are documented here. Format based on
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/); this project aims to
 follow [Semantic Versioning](https://semver.org/).
 
+## [1.9.0] — 2026-06-17
+
+Makes cloning work on **real sites**, not just pages with inline styles. Found by
+kicking the tires: most modern sites keep their colours and fonts in **external
+stylesheet files**, which the page digest wasn't reading — so palette/fonts came
+back empty on real sites.
+
+### Changed
+- **`inspect` / `extract` now fetch and parse linked stylesheets.** The page's
+  `<link rel="stylesheet">` files are fetched (same SSRF guard — public hosts only,
+  capped to a few sheets at 600 KB each, 8 s timeouts) and their CSS feeds the palette
+  and font extraction. Real example: tailwindcss.com went from **0 → 16 colours / 8
+  fonts**, Hacker News from **0 → 12 colours / 2 fonts**. This is what powers cloning,
+  fidelity scoring, and the iterate loop on actual websites.
+- `inspect` now reports `stylesheets_parsed`.
+
+### Known polish (next)
+- A few extracted tokens can be noisy (CSS-variable font references, alpha-suffixed
+  hex) — to be normalized in a later pass.
+
 ## [1.8.0] — 2026-06-17
 
 The clone now **improves itself toward a target**. After a clone, the builder scores
