@@ -15,17 +15,19 @@
 <br>
 <br>
 
-<img src="assets/demo.gif" alt="local-llm-setup auto-detecting the machine and recommending a model plan sized to its memory" width="760">
+<img src="assets/demo.gif" alt="Side-by-side terminals: a real macOS/Linux run of local-llm-setup auto-detecting the machine and proposing a sized model plan, next to a clearly-labelled experimental Windows PowerShell preview" width="860">
 
 <br>
 
-<sub><em>One command reads your hardware and proposes a model plan that fits — shown here as a <code>--dry-run</code>, so nothing is installed or downloaded.</em></sub>
+<sub><em>One command reads your hardware and proposes a model plan that fits — shown here as a <code>--dry-run</code>, so nothing is installed or downloaded. Left is a real macOS/Linux run; right is an experimental, not-yet-verified Windows preview.</em></sub>
 
 <br>
 
 </div>
 
-<!-- Hero visual above is a real terminal recording (assets/demo.gif, rendered from assets/demo.tape via vhs). Re-record with `vhs assets/demo.tape` to refresh. -->
+<!-- Hero visual above is a side-by-side of two terminal panes: a REAL macOS/Linux run of
+     ./local-llm-setup.sh --dry-run (left) and a SCRIPTED Windows PowerShell preview (right,
+     assets/win-sim.sh). Rebuild with `bash assets/build-demo.sh` (needs vhs + ffmpeg). -->
 
 ---
 
@@ -302,6 +304,9 @@ What you trade that gap *for*: it runs entirely on your machine, costs nothing, 
 
 | Tool capability | **local-llm-setup** | Claude Code | Lovable |
 |---|:---:|:---:|:---:|
+| **Runs 100% local & offline** | ✅ | ❌ | ❌ |
+| **Free — no subscription** | ✅ | ❌ | ❌ |
+| **Your code never leaves your machine** | ✅ | ❌ | ❌ |
 | Build & edit code | ✅ | ✅ | ✅ |
 | Live preview | ✅ | ✅ | ✅ |
 | Plan before building | ✅ | ✅ | ✅ |
@@ -313,24 +318,22 @@ What you trade that gap *for*: it runs entirely on your machine, costs nothing, 
 | Extract a site's palette & fonts | ✅ | ✅ | ✅ |
 | **Clone a real website** | ✅ | ✅ | ✅ |
 | Auto-pick the model per request | ✅ ⚡ | ❌ | ❌ |
-| Screenshot a page | ⚠️ | ✅ | ✅ |
+| Screenshot a page | ✅ | ✅ | ✅ |
 | Visual / fidelity self-check | ⚠️ | ✅ | ✅ |
 | Web search | ❌ | ✅ | ⚠️ |
 | Image generation | ❌ | ⚠️ | ✅ |
 | Multi-file projects | ❌ | ✅ | ✅ |
 | Backend / database / auth | ❌ | ⚠️ | ✅ |
 | One-click deploy | ❌ | ✅ | ✅ |
-| Git / repo sync | ❌ | ✅ | ✅ |
-| **Runs 100% local & offline** | ✅ | ❌ | ❌ |
-| **Free — no subscription** | ✅ | ❌ | ❌ |
-| **Your code never leaves your machine** | ✅ | ❌ | ❌ |
+| Git / repo sync | ✅ <sup>†</sup> | ✅ | ✅ |
 
 <sub>✅ have it · ⚠️ partial, best-effort, or a different approach · ❌ not yet — building toward it</sub>
 
-**Where we're behind, and committed to closing:** multi-file projects, web search, image generation, a backend/database, one-click deploy, and Git sync. Two honest caveats on the ⚠️s:
+**Where we're behind, and committed to closing:** multi-file projects, web search, image generation, a backend/database, and one-click deploy. One honest caveat on the remaining ⚠️:
 
 - **Visual check is _structural_, not pixel-perfect.** We score a clone's palette, fonts and sections against the real page — local coder models aren't vision-capable yet, so we measure the design tokens rather than "looking" at the screenshot. It's the more *actionable* signal for a code model, but it isn't the same thing.
-- **Screenshots are best-effort** — we reuse an already-installed Chrome/Chromium (no extra dependency) and degrade gracefully if none is found.
+
+<sub>**†&nbsp;Git sync is local-only.** We initialise a real git repo, write a sensible `.gitignore`, commit, and export a `.zip` that includes the full `.git` history. **Pushing to a remote (e.g. GitHub) is not automated** — that needs your own credentials, so the tool prints the exact `git push` command for you to run rather than running it for you. Screenshots are Playwright-backed (managed Chromium) with a system-Chrome fallback.</sub>
 
 The roadmap toward parity lives in [`docs/PRD-local-builder-v2-tools-and-goals.md`](docs/PRD-local-builder-v2-tools-and-goals.md). **Issues and PRs that turn a ❌ into a ✅ are exactly what this project is for.**
 

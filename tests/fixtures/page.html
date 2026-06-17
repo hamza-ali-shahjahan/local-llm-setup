@@ -1,0 +1,14 @@
+<!doctype html>
+<html>
+  <head><meta charset="utf-8"><title>element fixture</title>
+    <style>
+      html,body{margin:0;padding:0;background:#ffffff}
+      #box{position:absolute;left:40px;top:40px;width:200px;height:120px;background:#cc2222}
+    </style>
+  </head>
+  <body>
+    <!-- A white page with one red box. Element capture of #box must yield a 200x120
+         image that is predominantly red — proving the selector clip works. -->
+    <div id="box"></div>
+  </body>
+</html>

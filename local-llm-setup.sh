@@ -619,7 +619,8 @@ const AGENT_SYSTEM =
   "<fetch url=\"https://...\">  — fetch a public web page's raw HTML\n" +
   "<inspect url=\"https://...\">  — a STRUCTURED digest of a page: title, sections, headings, links, images, the real colour palette and font families\n" +
   "<extract url=\"https://...\">  — just a page's design tokens (palette + fonts)\n" +
-  "<screenshot url=\"https://...\">  — render a page in a headless browser and capture a PNG (best-effort; needs Chrome/Chromium)\n" +
+  "<screenshot url=\"https://...\">  — render a page in a headless browser (Playwright's managed Chromium, installed on demand) and capture a PNG\n" +
+  "<gitsync path=\".\" message=\"...\">  — turn the workspace project into a real local git repo (git init + .gitignore + commit) and export a .zip with the .git history. Pushing to GitHub stays yours to do (your own token).\n" +
   "To CLONE or recreate a real website, FIRST <inspect url=\"...\"> to observe its real structure, palette and fonts — never invent them — then write the page to match those exact colours, fonts and sections. " +
   "Use the result to decide the next step. " +
   "Narrate like a careful engineer thinking out loud: before each tool call, say in ONE short line what you're about to do and why. " +
@@ -1119,14 +1120,24 @@ function findToolCall(text) {
   if (ex) return { kind: "extract", url: ex[1].trim() };
   const sh = text.match(/<screenshot\s+url="([^"]+)"\s*\/?>/i);
   if (sh) return { kind: "screenshot", url: sh[1].trim() };
+  const gs = text.match(/<gitsync\b([^>]*)\/?>/i);
+  if (gs) {
+    const attrs = gs[1] || "";
+    const p = attrs.match(/path="([^"]*)"/i), m = attrs.match(/message="([^"]*)"/i), rm = attrs.match(/remote="([^"]*)"/i);
+    return { kind: "gitsync", path: (p ? p[1].trim() : "."), message: (m ? m[1] : "Initial commit — scaffolded by Local LLM Builder"), remote: (rm ? rm[1].trim() : null) };
+  }
   return null;
 }
 function approvalCard(tool) {
   return new Promise(resolve => {
     const c = document.createElement("div");
     c.className = "msg bot";
-    const label = tool.kind === "run" ? "Run this command?" : ("Write file: " + tool.path + "?");
-    const codeTxt = tool.kind === "run" ? tool.cmd : tool.content;
+    const label = tool.kind === "run" ? "Run this command?"
+                : tool.kind === "gitsync" ? "Make this a local git repo + commit?"
+                : ("Write file: " + tool.path + "?");
+    const codeTxt = tool.kind === "run" ? tool.cmd
+                  : tool.kind === "gitsync" ? ("git init + .gitignore + commit\npath: " + tool.path + "\nmessage: " + tool.message + (tool.remote ? "\nremote (configured, NOT pushed): " + tool.remote : ""))
+                  : tool.content;
     c.innerHTML = '<div class="who">&#9889;</div><div class="body"><div class="approve"><div class="lbl"></div><pre></pre><div class="btns"><button class="ok">Approve</button><button class="no">Skip</button></div></div></div>';
     c.querySelector(".lbl").textContent = label;
     c.querySelector("pre").textContent = codeTxt;
@@ -1152,6 +1163,17 @@ async function runTool(tool) {
     term('<span class="cmd">[write] ' + escapeHtml(tool.path) + '</span> ' + (j.ok ? "ok" : ('<span class="err">' + escapeHtml(j.error || "failed") + "</span>")) + "\n");
     showTab("term");
     return j.ok ? ("wrote " + tool.path) : ("error: " + (j.error || "failed"));
+  } else if (tool.kind === "gitsync") {
+    term('<span class="cmd">[gitsync] ' + escapeHtml(tool.path) + '</span>\n'); showTab("term");
+    const r = await fetch(AGENT_URL + "/api/agent/gitsync", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path: tool.path, message: tool.message, remote: tool.remote }) });
+    const j = await r.json();
+    if (!j.ok) { term('<span class="err">' + escapeHtml(j.error || "failed") + "</span>\n\n"); return "gitsync error: " + (j.error || "failed"); }
+    const out = "git repo ready at " + j.repo_path + "\n  branch: " + j.branch + " · commit: " + (j.commit ? j.commit.slice(0, 9) : "(none)")
+              + " · files: " + j.files_tracked + (j.gitignore_written ? " · wrote .gitignore" : "")
+              + (j.zip_path ? "\n  export: " + j.zip_path + " (" + j.zip_bytes + " bytes, includes .git history)" : "")
+              + "\n  to push (your token): " + j.push_hint;
+    term(escapeHtml(out) + "\n\n");
+    return out;
   } else {
     // read-only tools: read | fetch | inspect | extract
     const label = tool.kind === "read" ? tool.path : tool.url;
@@ -1414,8 +1436,16 @@ write_agent_server() {
 #                                        (each of a/b is {url} or {html}) — palette/font/
 #                                        section/heading overlap -> 0-100 + deltas.
 #                                        NB: structural, not pixel — local models aren't vision.
-#   POST /api/agent/screenshot {url|html} -> render via an installed headless Chrome/   (read-only)
-#                                        Chromium -> PNG (graceful if no browser found)
+#   POST /api/agent/screenshot {url|html} -> render in a headless browser -> PNG       (read-only)
+#                                        Playwright (managed Chromium) first, then a
+#                                        system/managed Chrome subprocess; full-page +
+#                                        element (selector) capture on the Playwright path.
+#   POST /api/agent/gitsync {path,message,remote?} -> turn a generated project into a   (mutating -> approved)
+#                                        real local git repo: git init + sensible
+#                                        .gitignore + stage + commit, and export a .zip
+#                                        that INCLUDES the .git history. An optional
+#                                        remote is only *configured*, never pushed —
+#                                        pushing uses the user's own GitHub token.
 #
 # These read/inspect/extract/score tools are what let the builder CLONE a real site:
 # observe the page, rebuild it, then SCORE how close the rebuild is.
@@ -1431,7 +1461,7 @@ write_agent_server() {
 # An approved command itself is not sandboxed (an approved `rm -rf ~` still runs) —
 # UI approval is the guardrail for mutations. Harden before any default ship.
 
-import json, os, re, socket, ipaddress, subprocess, base64, shutil, tempfile, urllib.request
+import json, os, re, socket, ipaddress, subprocess, base64, shutil, tempfile, struct, glob, sys, urllib.request
 from collections import Counter
 from html.parser import HTMLParser
 from urllib.parse import urljoin, urlsplit
@@ -1642,35 +1672,112 @@ def fidelity(a, b):
         "sections_original": secA, "sections_clone": secB,
     }
 
-# ---------- screenshot via an installed headless browser (graceful) ----------
-def find_browser():
+# ---------- screenshot: robust headless capture ----------
+# Primary path is Playwright driving a *managed* Chromium it downloads itself, so
+# screenshots work even on a machine with no browser installed (and we install the
+# browser on demand). If Playwright isn't present we fall back to a system / managed
+# Chrome subprocess so the zero-dependency install still degrades usefully rather
+# than failing. Only when BOTH are unavailable do we raise a clear, actionable error.
+PLAYWRIGHT_HINT = "pip install playwright && python3 -m playwright install chromium"
+
+def _png_dims(b):
+    """(width, height) from a PNG's IHDR, or (0,0) if it isn't a PNG."""
+    if len(b) >= 24 and b[:8] == b"\x89PNG\r\n\x1a\n":
+        w, h = struct.unpack(">II", b[16:24]); return w, h
+    return (0, 0)
+
+# Full Chrome/Chromium binaries usable via the `--headless=new --screenshot` subprocess
+# path: Playwright's downloaded Chromium (version-pinned, "managed") first, then any
+# system browser. (The chrome-headless-shell binary is reserved for the Playwright path,
+# whose flag handling differs.)
+def _full_chrome_candidates():
+    cands = []
+    caches = [os.path.join(HOME, "Library", "Caches", "ms-playwright"),
+              os.path.join(HOME, ".cache", "ms-playwright"),
+              os.environ.get("PLAYWRIGHT_BROWSERS_PATH", "")]
+    pats = ("chromium-*/chrome-*/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
+            "chromium-*/chrome-*/chrome",          # linux
+            "chromium-*/chrome-*/chrome.exe")      # windows
+    for c in caches:
+        if not c: continue
+        for pat in pats:
+            cands += sorted(glob.glob(os.path.join(c, pat)), reverse=True)   # highest revision first
     for c in ("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
               "/Applications/Chromium.app/Contents/MacOS/Chromium",
               "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
               "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser"):
-        if os.path.exists(c): return c
+        if os.path.exists(c): cands.append(c)
     for name in ("google-chrome", "google-chrome-stable", "chromium", "chromium-browser",
                  "chrome", "microsoft-edge", "brave-browser"):
         p = shutil.which(name)
-        if p: return p
-    return None
+        if p: cands.append(p)
+    seen, out = set(), []
+    for c in cands:
+        if c not in seen and os.path.exists(c): seen.add(c); out.append(c)
+    return out
 
-def screenshot(url=None, html=None, width=1280, height=1600, name="shot"):
-    browser = find_browser()
-    if not browser:
-        raise ValueError("no headless browser found — install Google Chrome or Chromium to enable screenshots")
-    shots = os.path.join(WORKSPACE, "shots"); os.makedirs(shots, exist_ok=True)
-    out = os.path.join(shots, (re.sub(r'[^A-Za-z0-9_.-]', '_', name)[:40] or "shot") + ".png")
-    prof = tempfile.mkdtemp(prefix="llmshot_")
+def find_browser():
+    c = _full_chrome_candidates()
+    return c[0] if c else None
+
+def _have_playwright():
     try:
-        if html is not None:
-            src = os.path.join(prof, "page.html")
-            with open(src, "w") as f: f.write(html)
-            target = "file://" + src
-        else:
-            p = urlsplit(url or "")
-            if p.scheme not in ("http", "https"): raise ValueError("only http/https URLs")
-            _assert_public(p.hostname); target = url
+        import playwright.sync_api  # noqa: F401
+        return True
+    except Exception:
+        return False
+
+def _resolve_target(url, html, prof):
+    if html is not None:
+        src = os.path.join(prof, "page.html")
+        with open(src, "w", encoding="utf-8") as f: f.write(html)
+        return "file://" + src
+    p = urlsplit(url or "")
+    if p.scheme not in ("http", "https"): raise ValueError("only http/https URLs (or pass html=)")
+    _assert_public(p.hostname)
+    return url
+
+def _shot_playwright(target, width, height, full_page, selector):
+    """Render with Playwright's managed Chromium. Returns PNG bytes, or None if
+    Playwright isn't importable. Installs the browser on demand if it's missing."""
+    try:
+        from playwright.sync_api import sync_playwright
+    except Exception:
+        return None
+    for attempt in range(2):
+        try:
+            with sync_playwright() as p:
+                browser = p.chromium.launch(args=["--no-sandbox"])
+                try:
+                    page = browser.new_page(viewport={"width": width, "height": height},
+                                            device_scale_factor=1)
+                    page.goto(target, wait_until="load", timeout=20000)
+                    if selector:
+                        el = page.query_selector(selector)
+                        if el is None: raise ValueError(f"element not found for selector {selector!r}")
+                        return el.screenshot(type="png")
+                    return page.screenshot(type="png", full_page=bool(full_page))
+                finally:
+                    browser.close()
+        except Exception as e:
+            # Browser not downloaded yet -> install it on demand, then retry once.
+            if attempt == 0 and ("Executable doesn't exist" in str(e) or "playwright install" in str(e)):
+                try:
+                    subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"],
+                                   capture_output=True, timeout=300)
+                    continue
+                except Exception:
+                    pass
+            raise
+
+def _shot_chrome(target, width, height):
+    """Render with a system / managed Chrome subprocess. Returns PNG bytes, or None
+    if no full Chrome binary is found. Does not support element/full-page capture."""
+    browser = find_browser()
+    if not browser: return None
+    prof = tempfile.mkdtemp(prefix="llmshot_")
+    out = os.path.join(prof, "shot.png")
+    try:
         # --virtual-time-budget makes headless render then EXIT (otherwise it can hang on
         # network-idle); the no-first-run/extension flags keep cold starts fast.
         subprocess.run([browser, "--headless=new", "--disable-gpu", "--no-sandbox", "--hide-scrollbars",
@@ -1678,13 +1785,183 @@ def screenshot(url=None, html=None, width=1280, height=1600, name="shot"):
                         "--disable-background-networking", "--virtual-time-budget=5000",
                         "--user-data-dir=" + prof, f"--window-size={width},{height}",
                         f"--screenshot={out}", target], capture_output=True, timeout=25)
+        if not os.path.exists(out): return None
+        return open(out, "rb").read()
     finally:
         shutil.rmtree(prof, ignore_errors=True)
-    if not os.path.exists(out):
-        raise ValueError("the browser produced no image (it may be too old for --headless=new)")
-    data = open(out, "rb").read()
-    return {"path": os.path.relpath(out, WORKSPACE), "bytes": len(data),
-            "dataurl": "data:image/png;base64," + base64.b64encode(data).decode()}
+
+def screenshot(url=None, html=None, width=1280, height=1600, name="shot",
+               full_page=False, selector=None, outdir=None):
+    width  = max(1, min(int(width),  4000))
+    height = max(1, min(int(height), 8000))
+    shots = outdir or os.path.join(WORKSPACE, "shots"); os.makedirs(shots, exist_ok=True)
+    out = os.path.join(shots, (re.sub(r'[^A-Za-z0-9_.-]', '_', name)[:40] or "shot") + ".png")
+    prof = tempfile.mkdtemp(prefix="llmshot_")
+    errors = []
+    try:
+        target = _resolve_target(url, html, prof)
+        png, backend = None, None
+        try:
+            png = _shot_playwright(target, width, height, full_page, selector)
+            if png is not None: backend = "playwright"
+        except Exception as e:
+            errors.append("playwright: " + str(e))
+        if png is None and not selector:        # the subprocess path can't clip to a selector
+            try:
+                png = _shot_chrome(target, width, height)
+                if png is not None: backend = "chrome"
+            except Exception as e:
+                errors.append("chrome: " + str(e))
+        if png is None:
+            detail = ("  (" + "; ".join(errors) + ")") if errors else ""
+            raise ValueError("couldn't capture a screenshot — install Playwright ["
+                             + PLAYWRIGHT_HINT + "] or Google Chrome/Chromium." + detail)
+        with open(out, "wb") as f: f.write(png)
+    finally:
+        shutil.rmtree(prof, ignore_errors=True)
+    w, h = _png_dims(png)
+    rel = os.path.relpath(out, WORKSPACE)
+    return {"path": rel if not rel.startswith("..") else out, "abspath": out,
+            "bytes": len(png), "width": w, "height": h, "backend": backend,
+            "dataurl": "data:image/png;base64," + base64.b64encode(png).decode()}
+
+# ---------- local git sync: turn a generated project into a real git repo ----------
+GITIGNORE_DEFAULT = """# Dependencies
+node_modules/
+bower_components/
+vendor/
+.pnp/
+.pnp.js
+
+# Build output / caches
+dist/
+build/
+out/
+.next/
+.nuxt/
+.svelte-kit/
+.cache/
+coverage/
+*.tsbuildinfo
+
+# Environment / secrets — never commit these
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+"""
+
+def _git(args, cwd, env=None):
+    e = dict(os.environ)
+    if env: e.update(env)
+    return subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, timeout=30, env=e)
+
+def git_sync(path=".", message="Initial commit — scaffolded by Local LLM Builder",
+             remote=None, branch="main", base=None, export=True, deterministic=False):
+    """Initialise (or reuse) a local git repo for a generated project, write a sensible
+    .gitignore, stage everything and commit, and export a .zip that includes the .git
+    history. `remote`, if given, is only *configured* — we never push (that needs the
+    user's own GitHub credentials). `base` defaults to the workspace; tests pass a temp
+    dir. `deterministic` pins author/committer identity + dates for reproducible commits."""
+    if shutil.which("git") is None:
+        raise ValueError("git is not installed — install git to enable repo sync")
+    base = os.path.realpath(base or WORKSPACE)
+    proj = os.path.realpath(os.path.join(base, path))
+    if proj != base and not proj.startswith(base + os.sep):
+        raise ValueError("project path escapes the workspace")
+    if not os.path.isdir(proj):
+        raise ValueError(f"no such project directory: {path!r}")
+
+    # 1) .gitignore — create if absent; never clobber a project's existing one.
+    gi = os.path.join(proj, ".gitignore"); wrote_gi = False
+    if not os.path.exists(gi):
+        with open(gi, "w", encoding="utf-8") as f: f.write(GITIGNORE_DEFAULT)
+        wrote_gi = True
+
+    # 2) init (idempotent).
+    already = os.path.isdir(os.path.join(proj, ".git"))
+    if not already:
+        if _git(["init", "-b", branch], proj).returncode != 0:   # older git: no -b on init
+            _git(["init"], proj); _git(["checkout", "-b", branch], proj)
+
+    # Local identity so a fresh machine never fails to commit (doesn't touch global config).
+    if not _git(["config", "user.name"], proj).stdout.strip():
+        _git(["config", "user.name", "Local LLM Builder"], proj)
+    if not _git(["config", "user.email"], proj).stdout.strip():
+        _git(["config", "user.email", "builder@local-llm-setup"], proj)
+
+    env = {}
+    if deterministic:
+        env = {"GIT_AUTHOR_NAME": "Local LLM Builder", "GIT_AUTHOR_EMAIL": "builder@local-llm-setup",
+               "GIT_COMMITTER_NAME": "Local LLM Builder", "GIT_COMMITTER_EMAIL": "builder@local-llm-setup",
+               "GIT_AUTHOR_DATE": "2020-01-01T00:00:00+0000", "GIT_COMMITTER_DATE": "2020-01-01T00:00:00+0000"}
+
+    # 3) stage + commit.
+    head_before = _git(["rev-parse", "HEAD"], proj).stdout.strip()
+    _git(["add", "-A"], proj, env)
+    _git(["commit", "-m", message], proj, env)   # nonzero if nothing to commit; detected via HEAD below
+    head = _git(["rev-parse", "HEAD"], proj)
+    commit_hash = head.stdout.strip() if head.returncode == 0 else None
+    commit_made = bool(commit_hash) and commit_hash != head_before
+    n_commits = 0
+    rc = _git(["rev-list", "--count", "HEAD"], proj)
+    if rc.returncode == 0: n_commits = int((rc.stdout.strip() or "0"))
+    tracked = [t for t in _git(["ls-files"], proj).stdout.split("\n") if t]
+
+    # 4) optional remote — configure only, never push.
+    remote_set = False
+    if remote:
+        _git(["remote", "remove", "origin"], proj)            # ignore failure if none
+        remote_set = _git(["remote", "add", "origin", remote], proj).returncode == 0
+
+    # 5) export a .zip that INCLUDES the .git history. Build it in a temp dir first so we
+    #    never try to zip the export into itself when path == ".".
+    zip_path, zip_bytes = None, 0
+    if export:
+        exports = os.path.join(base, "exports"); os.makedirs(exports, exist_ok=True)
+        name = os.path.basename(proj.rstrip(os.sep)) or "project"
+        tmpd = tempfile.mkdtemp(prefix="llmzip_")
+        try:
+            made = shutil.make_archive(os.path.join(tmpd, name), "zip", root_dir=proj)
+            zip_path = os.path.join(exports, name + ".zip")
+            shutil.move(made, zip_path)
+            zip_bytes = os.path.getsize(zip_path)
+        finally:
+            shutil.rmtree(tmpd, ignore_errors=True)
+
+    cur_branch = _git(["rev-parse", "--abbrev-ref", "HEAD"], proj).stdout.strip() or branch
+    return {
+        "repo_path": proj, "branch": cur_branch,
+        "initialized": not already, "gitignore_written": wrote_gi,
+        "gitignore_path": os.path.relpath(gi, base),
+        "commit": commit_hash, "commit_made": commit_made, "commits_total": n_commits,
+        "message": message, "files_tracked": len(tracked), "tracked_sample": tracked[:50],
+        "remote": remote, "remote_set": remote_set,
+        "zip_path": zip_path, "zip_bytes": zip_bytes,
+        "push_hint": ((f"git -C {proj} push -u origin {cur_branch}" if remote
+                       else f"git -C {proj} remote add origin <your-repo-url> && git -C {proj} push -u origin {cur_branch}")
+                      + "   # uses YOUR GitHub credentials/token — not stored or sent by this tool"),
+    }
 
 class H(BaseHTTPRequestHandler):
     def _cors(self):
@@ -1707,8 +1984,10 @@ class H(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path.startswith("/api/agent/ping"):
             return self._json(200, {"ok": True, "workspace": WORKSPACE,
-                                    "tools": ["run", "write", "read", "fetch", "inspect", "extract", "score", "screenshot"],
-                                    "browser": bool(find_browser())})
+                                    "tools": ["run", "write", "read", "fetch", "inspect", "extract", "score", "screenshot", "gitsync"],
+                                    "browser": bool(find_browser()) or _have_playwright(),
+                                    "screenshot_backend": ("playwright" if _have_playwright()
+                                                           else ("chrome" if find_browser() else None))})
         name = "index.html" if self.path in ("/", "") else os.path.basename(self.path.split("?")[0])
         fp = os.path.join(CHAT_DIR, name)
         if os.path.isfile(fp):
@@ -1782,7 +2061,18 @@ class H(BaseHTTPRequestHandler):
             try:
                 return self._json(200, {"ok": True, **screenshot(url=req.get("url"), html=req.get("html"),
                                                                   width=int(req.get("width", 1280)), height=int(req.get("height", 1600)),
-                                                                  name=req.get("name", "shot"))})
+                                                                  name=req.get("name", "shot"),
+                                                                  full_page=bool(req.get("full_page", False)),
+                                                                  selector=req.get("selector"))})
+            except Exception as e:
+                return self._json(200, {"ok": False, "error": str(e)})
+        if path.startswith("/api/agent/gitsync"):
+            try:
+                return self._json(200, {"ok": True, **git_sync(path=(req.get("path") or "."),
+                                                               message=(req.get("message") or "Initial commit — scaffolded by Local LLM Builder"),
+                                                               remote=req.get("remote"),
+                                                               branch=(req.get("branch") or "main"),
+                                                               export=bool(req.get("export", True)))})
             except Exception as e:
                 return self._json(200, {"ok": False, "error": str(e)})
         return self._json(404, {"error": "unknown endpoint"})
@@ -1790,8 +2080,9 @@ class H(BaseHTTPRequestHandler):
 
 if __name__ == "__main__":
     print(f"Local LLM agent server -> http://{HOST}:{PORT}   (workspace: {WORKSPACE})")
-    print("  tools: run, write, read, fetch, inspect, extract, score, screenshot"
-          + ("  [headless browser: found]" if find_browser() else "  [no headless browser -> screenshots disabled]"))
+    _be = "playwright (managed Chromium)" if _have_playwright() else ("chrome subprocess" if find_browser() else None)
+    print("  tools: run, write, read, fetch, inspect, extract, score, screenshot, gitsync"
+          + (f"  [screenshots: {_be}]" if _be else "  [screenshots: install Playwright or Chrome to enable]"))
     ThreadingHTTPServer((HOST, PORT), H).serve_forever()
 AGENTPY
 }

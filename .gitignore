@@ -22,3 +22,9 @@ Icon?
 .env.*
 *.pem
 *.key
+
+# Python (test caches / local virtualenv)
+__pycache__/
+*.py[cod]
+.venv/
+venv/
