@@ -29,7 +29,7 @@
 #   ./local-llm-setup.sh --help
 #
 set -euo pipefail
-VERSION="1.10.1"
+VERSION="1.11.0"
 
 # ----------------------------------------------------------------------------
 # Pretty output (degrades gracefully if the terminal has no color)
@@ -599,7 +599,7 @@ const BUILDER_SYSTEM =
   "clean, modern look: bg-background / text-foreground, bg-card, text-muted-foreground, border, rounded-lg / rounded-xl, " +
   "For a DARK theme, add class=\"dark\" to the <html> tag — the tokens switch to dark automatically (keep using bg-background / bg-card / text-foreground). " +
   "For a coloured accent (e.g. purple, emerald), use a literal Tailwind class on the key elements, like bg-purple-600 / hover:bg-purple-700 on buttons. " +
-  "generous padding, and subtle shadows (shadow-sm / shadow-md). For any image use https://picsum.photos/seed/NAME/W/H " +
+  "generous padding, and subtle shadows (shadow-sm / shadow-md). When specific real image URLs are provided (e.g. when cloning a page), use those EXACT urls; otherwise use https://picsum.photos/seed/NAME/W/H " +
   "(e.g. https://picsum.photos/seed/hero/1600/900) which always loads. " +
   "When text sits OVER an image, always keep it legible: put the image in a relative container with the text above it, " +
   "and add a dark overlay (e.g. an absolute inset div with bg-black/50) or a gradient behind the text. " +
@@ -716,7 +716,18 @@ function cloneSpecFromDigest(d) {
   if (d.sections && d.sections.length) L.push("Section order, top to bottom: " + d.sections.map(s => s.tag + (s.id ? "#" + s.id : "")).join(" › "));
   if (d.headings && d.headings.length) L.push("Real headings / copy to reuse:\n" + d.headings.slice(0, 16).map(h => "• (" + h.level + ") " + h.text).join("\n"));
   if (d.nav_links && d.nav_links.length) { const nav = d.nav_links.map(l => l.text).filter(Boolean).slice(0, 8); if (nav.length) L.push("Nav items: " + nav.join(" · ")); }
-  if (d.counts && d.counts.images) L.push("It has ~" + d.counts.images + " images — use https://picsum.photos/seed/NAME/W/H placeholders in those spots.");
+  // REAL images from the page — feed the actual URLs (<img> tags + CSS backgrounds) so the
+  // clone uses the page's own imagery, not placeholders (the single biggest visual lever).
+  const imgs = (d.images || []).map(im => (im && im.src) || im).filter(Boolean);
+  const bgs = d.bg_images || [];
+  if (imgs.length || bgs.length) {
+    L.push("Use the page's REAL image URLs below (do NOT use picsum) — place them in the matching spots (logo, hero, cards, etc.):");
+    if (bgs.length) L.push("Background images (hero / section backgrounds): " + bgs.slice(0, 5).join("  ·  "));
+    if (imgs.length) L.push("<img> sources, in document order: " + imgs.slice(0, 12).join("  ·  "));
+    L.push("If a real image fails to load, fall back to https://picsum.photos/seed/NAME/W/H.");
+  } else if (d.counts && d.counts.images) {
+    L.push("It has ~" + d.counts.images + " images — use https://picsum.photos/seed/NAME/W/H placeholders in those spots.");
+  }
   const t = d.tokens || {};
   if (t.font_sizes && t.font_sizes.length) L.push("Type scale (font sizes in use): " + t.font_sizes.join(" · "));
   if (t.radii && t.radii.length) L.push("Corner radii to match: " + t.radii.join(" · "));
@@ -1839,6 +1850,13 @@ def _merge_rendered(out, data):
     out["tokens"] = {"font_sizes": data.get("font_sizes", []), "radii": data.get("radii", []),
                      "shadows": data.get("shadows", []), "spacing": data.get("spacing", []),
                      "backgrounds": data.get("backgrounds", [])}
+    # surface REAL background-image URLs (heroes / section bgs) the page actually paints,
+    # so a clone can reuse them instead of placeholders. Computed styles are absolute.
+    bgimgs = []
+    for s in (data.get("backgrounds") or []):
+        for m in re.findall(r'url\(\s*["\']?(https?://[^"\')\s]+)', s or ""):
+            if m not in bgimgs: bgimgs.append(m)
+    out["bg_images"] = bgimgs[:8]
     out["motion"] = data.get("motion", {}) or {}
     out["framework"] = data.get("framework", [])
     out["states"] = data.get("states", [])
