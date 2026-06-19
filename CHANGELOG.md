@@ -4,6 +4,27 @@ All notable changes to this project are documented here. Format based on
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/); this project aims to
 follow [Semantic Versioning](https://semver.org/).
 
+## [1.11.0] — 2026-06-20
+
+Clones use the **real images** now, and there's an **objective fidelity eval** behind it.
+
+### Added
+- **Real-image cloning.** When recreating a page, the clone spec now feeds the inspected
+  page's **actual `<img>` URLs** (and, when a headless render is available, its CSS
+  **background-image** URLs) to the coder — with `picsum` only as a fallback. So a clone
+  uses the site's own imagery instead of placeholders. The `<img>` path works everywhere
+  (it comes from the stdlib parse, no extra deps); background images need the optional
+  render and degrade gracefully. *(Verified: the URLs are hotlinkable and render in the clone.)*
+- **`tools/clone_eval.py` — an autonomous clone-fidelity eval harness.** Screenshots the
+  real page and each clone (full-page) and scores **visual** similarity — *edge-structure +
+  layout + colour, with a blank-guard so a near-empty page can't game a high score by
+  matching the background colour* — alongside the structural score, logging every run. Runs
+  in a self-contained venv (`~/.local-llm-setup/.eval-venv`, Pillow + numpy). This is the
+  objective measure behind the goal/iterate loop.
+
+### Internal
+- `inspect` surfaces a `bg_images` list (real CSS background-image URLs) when rendering.
+
 ## [1.10.1] — 2026-06-18
 
 ### Fixed
