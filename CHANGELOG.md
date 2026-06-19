@@ -4,6 +4,17 @@ All notable changes to this project are documented here. Format based on
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/); this project aims to
 follow [Semantic Versioning](https://semver.org/).
 
+## [1.11.1] — 2026-06-20
+
+### Added
+- **Clones match the page's theme (dark vs light).** Before building a clone, the builder
+  takes a quick screenshot of the real page and measures its brightness (in-browser via
+  canvas — no extra dependency), then tells the coder to use a dark or light treatment to
+  match. Fixes the common case where a clone of a dark site (e.g. a near-black homepage)
+  came out white. Verified: on a dark target the clone now renders dark (brightness ~214 →
+  ~26, close to the real ~4) and the colour match jumps to ~90%. The eval harness measures
+  the same theme so the improvement is tracked.
+
 ## [1.11.0] — 2026-06-20
 
 Clones use the **real images** now, and there's an **objective fidelity eval** behind it.

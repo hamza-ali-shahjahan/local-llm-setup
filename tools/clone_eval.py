@@ -66,6 +66,9 @@ def _load(path, W=900, H=1800):
     canvas.paste(im.crop((0, 0, W, min(H, im.size[1]))), (0, 0))
     return np.asarray(canvas, dtype=np.float64)
 
+def _brightness(path):
+    return float(np.asarray(Image.open(path).convert("L")).mean())
+
 def _ssim(x, y):
     mx, my, vx, vy = x.mean(), y.mean(), x.var(), y.var()
     cov = ((x - mx) * (y - my)).mean()
@@ -114,6 +117,8 @@ def visual_similarity(real_png, clone_png):
 # ---------- clone spec + generation ----------
 def clone_spec(d):
     L = [f"Recreate this web page as ONE self-contained HTML file: {d.get('title') or d.get('url')}"]
+    if d.get("theme") == "dark": L.append("IMPORTANT — this is a DARK page: near-black background (bg-zinc-950/bg-black, add class='dark' to <html>) with light text. Do NOT produce a white page.")
+    elif d.get("theme") == "light": L.append("Light-themed page: light background with dark text.")
     if d.get("description"): L.append("Tagline: " + d["description"])
     if d.get("palette"): L.append("Use THESE exact colours: " + ", ".join(d["palette"][:12]))
     if d.get("fonts"): L.append("Use THESE fonts (Google Fonts if needed): " + " · ".join(d["fonts"][:6]))
@@ -166,8 +171,10 @@ def main():
     emit({"event": "start", "url": a.url, "runs": a.runs, "target": a.target, "coder": coder, "ts": time.time()})
     real_png = shoot("real_target", url=a.url)
     d = agent("inspect", {"url": a.url}, timeout=90)
+    d["theme"] = "dark" if _brightness(real_png) < 110 else "light"
     base_spec = clone_spec(d)
-    emit({"event": "real_captured", "palette": len(d.get("palette", [])), "fonts": len(d.get("fonts", [])),
+    emit({"event": "real_captured", "theme": d["theme"], "real_brightness": round(_brightness(real_png), 1),
+          "palette": len(d.get("palette", [])), "fonts": len(d.get("fonts", [])),
           "sections": len(d.get("sections", [])), "headings": len(d.get("headings", []))})
 
     best = {"vis": -1, "html": None}
