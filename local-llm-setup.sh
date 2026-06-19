@@ -29,7 +29,7 @@
 #   ./local-llm-setup.sh --help
 #
 set -euo pipefail
-VERSION="1.11.0"
+VERSION="1.11.1"
 
 # ----------------------------------------------------------------------------
 # Pretty output (degrades gracefully if the terminal has no color)
@@ -708,8 +708,26 @@ function route(text) {
 }
 // Turn an inspect() digest into a concrete build spec — the REAL palette, fonts,
 // sections and copy from the page, so the coder transcribes it instead of inventing.
+// Measure the real page's overall theme (dark vs light) from a small screenshot, so the
+// clone matches it instead of defaulting to the light design system.
+async function pageTheme(url) {
+  try {
+    const j = await (await fetch(AGENT_URL + "/api/agent/screenshot", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url, width: 1024, height: 768 }), signal: abortCtl && abortCtl.signal })).json();
+    if (!j.ok || !j.dataurl) return null;
+    const img = new Image();
+    await new Promise((res, rej) => { img.onload = res; img.onerror = rej; img.src = j.dataurl; });
+    const c = document.createElement("canvas"); c.width = 64; c.height = 48;
+    const ctx = c.getContext("2d"); ctx.drawImage(img, 0, 0, 64, 48);
+    const px = ctx.getImageData(0, 0, 64, 48).data;
+    let s = 0; for (let i = 0; i < px.length; i += 4) s += (px[i] + px[i + 1] + px[i + 2]) / 3;
+    const bright = s / (px.length / 4);
+    return { brightness: Math.round(bright), theme: bright < 110 ? "dark" : "light" };
+  } catch (e) { if (e.name === "AbortError") throw e; return null; }
+}
 function cloneSpecFromDigest(d) {
   const L = ["Recreate this web page as ONE self-contained HTML file: " + (d.title || d.url)];
+  if (d.theme === "dark") L.push("IMPORTANT — this is a DARK-themed page: use a near-black / very dark background throughout (add class=\"dark\" to <html> and use bg-zinc-950 / bg-black on the body and sections) with light text. Do NOT produce a white page.");
+  else if (d.theme === "light") L.push("This is a light-themed page: light background with dark text.");
   if (d.description) L.push("Tagline / description: " + d.description);
   if (d.palette && d.palette.length) L.push("Use THESE exact colours from the site (hex/rgb): " + d.palette.join(", "));
   if (d.fonts && d.fonts.length) L.push("Use THESE fonts (load from Google Fonts if needed): " + d.fonts.join(" · "));
@@ -1318,6 +1336,7 @@ async function send() {
         try {
           const dg = await (await fetch(AGENT_URL + "/api/agent/inspect", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url: r.cloneUrl }), signal: abortCtl.signal })).json();
           if (dg.ok) {
+            const th = await pageTheme(r.cloneUrl); if (th) dg.theme = th.theme;   // match dark/light
             spec = cloneSpecFromDigest(dg); buildSpec = spec;
             body.innerHTML = taskList([{ status: "done", label: "Inspected the page", meta: (dg.palette || []).length + " colours · " + (dg.fonts || []).length + " fonts" }]) + streamPrefix() + buildTasks(0, false, false);
             scrollDown();
