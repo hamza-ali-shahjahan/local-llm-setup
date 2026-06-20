@@ -4,6 +4,28 @@ All notable changes to this project are documented here. Format based on
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/); this project aims to
 follow [Semantic Versioning](https://semver.org/).
 
+## [1.13.0] — 2026-06-21
+
+**Goal mode grows beyond cloning** — it's now a general measurable-quality engine, not a clone tool.
+
+### Added
+- **Goal mode works for any build, not just clones.** Goal mode is built around a *scorer*; until
+  now the only scorer was structural clone-fidelity, so the iterate-to-target loop only fired for
+  clones. This adds a second scorer — **requirements coverage** — so Goal mode can forge a measurable
+  goal for *any* build, then **build → grade which requirements are actually implemented (strict,
+  model-graded) → feed the missing ones back → rebuild → re-grade**, until it hits the target or
+  plateaus. *(Verified: "build a stopwatch with start/stop/reset and lap times" with Goal on → forged
+  an auto-scored goal → built a working stopwatch → scored 100% coverage (4/4) → "Goal reached",
+  logged.)* The forge picks the scorer automatically — clone → fidelity, a build with checkable
+  requirements → coverage, a pure taste call → an honest "by inspection". Every run is still logged
+  to `goal_runs.jsonl`.
+- **Goal is suggested for multi-part builds,** not only clones — when a request has several
+  requirements, the auto-recommend nudge offers Goal mode (iterate until complete).
+
+### Changed
+- The Goal info tooltip + nudges now describe the broader purpose — *"pin a measurable goal you
+  approve, then iterate toward the target"* — rather than framing Goal as clone-only.
+
 ## [1.12.2] — 2026-06-21
 
 ### Fixed
