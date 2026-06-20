@@ -280,6 +280,8 @@ Ask it to *"build me a stopwatch"* and it renders + runs in a sandboxed iframe (
 
 Under the hood it works like the tools that inspired it: it **picks the right model for each request** (⚡ Auto — a coder to build, a reasoner to explain), **plans before it builds**, **fixes its own runtime errors**, shows the work as **traceable tasks** (not raw code scrolling past), and keeps each chat as its own isolated project. With **agent mode** on it can also **clone a real website** — inspect its live palette, fonts and layout, rebuild it, then **score** how close the result is. See [how that compares to Claude Code and Lovable](#how-we-compare--and-where-were-honestly-behind) below.
 
+With **🎯 Goal Mode** on, it goes a step further: it **forges a measurable goal** from your ask (an exact metric + target, numeric evals, a feasibility check), **waits for you to Agree**, then **pursues** it — building, scoring and iterating toward the target — and reports an **honest verdict** (reached, or the ceiling it hit and the lever that would raise it), logging what it learns to `~/.local-llm-setup/goal_runs.jsonl`. It never fakes a number — goals with no automatic scorer are flagged *by inspection* and just build.
+
 **🧩 AI inside your editor** — installs [Continue](https://continue.dev) in VS Code / Cursor and points it at your local models:
 
 ```bash
@@ -318,6 +320,7 @@ What you trade that gap *for*: it runs entirely on your machine, costs nothing, 
 | Extract a site's palette & fonts | ✅ | ✅ | ✅ |
 | **Clone a real website** | ✅ | ✅ | ✅ |
 | Auto-pick the model per request | ✅ ⚡ | ❌ | ❌ |
+| **Goal-driven build** — forge → agree → pursue → log | ✅ 🎯 | ⚠️ | ❌ |
 | Screenshot a page | ✅ | ✅ | ✅ |
 | Visual / fidelity self-check | ⚠️ | ✅ | ✅ |
 | Web search | ❌ | ✅ | ⚠️ |
