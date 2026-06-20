@@ -4,6 +4,15 @@ All notable changes to this project are documented here. Format based on
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/); this project aims to
 follow [Semantic Versioning](https://semver.org/).
 
+## [1.12.1] — 2026-06-21
+
+### Changed
+- **The Agent + Goal toggles are now centered in the nav bar, each with an info icon.** They
+  used to sit far to the right where a new user would miss them; now they're front-and-centre,
+  and each has a hover **ⓘ** that explains in plain English what the mode does — and that it
+  needs `--agent` — so the builder's most powerful modes are discoverable without prior
+  knowledge. The header degrades gracefully at narrower widths.
+
 ## [1.12.0] — 2026-06-21
 
 **Goal Mode** — the builder can turn a request into a *measurable goal*, get your

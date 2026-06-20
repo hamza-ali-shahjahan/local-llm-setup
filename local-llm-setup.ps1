@@ -45,7 +45,7 @@ param(
   [switch]$Help
 )
 
-$AppVersion = '1.12.0'   # NB: not $Version — that name is the -Version switch param
+$AppVersion = '1.12.1'   # NB: not $Version — that name is the -Version switch param
 $Ctx = 8192             # default context window — big enough for real work, light on RAM
 $HomeDir = if ($env:USERPROFILE) { $env:USERPROFILE } else { $HOME }
 $ChatDir = Join-Path $HomeDir '.local-llm-setup\chat'   # where the chat page is written
@@ -318,8 +318,10 @@ function Write-ChatHtml {
   html, body { height: 100%; }
   body { margin: 0; display: flex; flex-direction: column; font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0d1017; color: #e6e6e6; overflow: hidden; }
 
-  header { flex: none; display: flex; align-items: center; gap: 12px; padding: 10px 16px; border-bottom: 1px solid #1e2430; background: #11151d; }
-  header h1 { font-size: 14px; margin: 0; font-weight: 600; color: #cfe3ff; display: flex; align-items: center; gap: 8px; }
+  header { flex: none; display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 12px; padding: 10px 16px; border-bottom: 1px solid #1e2430; background: #11151d; }
+  .hgroup { display: flex; align-items: center; gap: 12px; min-width: 0; }
+  .hright { justify-self: end; }
+  header h1 { font-size: 14px; margin: 0; font-weight: 600; color: #cfe3ff; display: flex; align-items: center; gap: 8px; white-space: nowrap; }
   header .dot { width: 8px; height: 8px; border-radius: 50%; background: #2ecc71; box-shadow: 0 0 8px #2ecc71; flex: none; }
   .grow { flex: 1; }
   .tbtn { background: #161b26; color: #c7d0dd; border: 1px solid #2a3140; border-radius: 8px; padding: 6px 12px; font-size: 13px; cursor: pointer; }
@@ -331,6 +333,16 @@ function Write-ChatHtml {
   .toggle .sw::after { content: ""; position: absolute; width: 15px; height: 15px; border-radius: 50%; background: #cfd6e0; top: 2px; left: 2px; transition: left .15s; }
   .toggle input:checked + .sw { background: #2b6cff; }
   .toggle input:checked + .sw::after { left: 17px; }
+  /* centered toggle cluster in the nav bar, each with an info icon + hover explainer */
+  .toggles { display: flex; align-items: center; gap: 22px; justify-self: center; }
+  .togwrap { display: flex; align-items: center; gap: 6px; }
+  .info { position: relative; display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; border-radius: 50%; border: 1px solid #3a4456; color: #8a95a5; font: italic 700 11px/1 Georgia, "Times New Roman", serif; cursor: help; user-select: none; flex: none; }
+  .info:hover, .info:focus { color: #cfe3ff; border-color: #2b6cff; outline: none; }
+  .info .tip { position: absolute; top: calc(100% + 9px); left: 50%; transform: translateX(-50%); width: 252px; background: #141923; border: 1px solid #2a3f63; border-radius: 9px; padding: 10px 12px; font: 400 12px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; color: #c2cedd; box-shadow: 0 14px 32px rgba(0,0,0,.55); opacity: 0; visibility: hidden; transition: opacity .12s ease; z-index: 60; text-align: left; pointer-events: none; }
+  .info .tip b { color: #cfe3ff; font-weight: 600; }
+  .info .tip code { background: #0d1017; border: 1px solid #2a3140; border-radius: 4px; padding: 0 4px; font-size: 11px; }
+  .info .tip::before { content: ""; position: absolute; bottom: 100%; left: 50%; transform: translateX(-50%); border: 6px solid transparent; border-bottom-color: #2a3f63; }
+  .info:hover .tip, .info:focus .tip { opacity: 1; visibility: visible; }
 
   .picker { position: relative; }
   .picker-btn { display: flex; align-items: center; gap: 8px; max-width: 230px; background: #0d1017; color: #e6e6e6; border: 1px solid #2a3140; border-radius: 8px; padding: 6px 10px; font-size: 13px; cursor: pointer; }
@@ -499,22 +511,34 @@ function Write-ChatHtml {
   .wsempty b { color: #8a95a5; font-weight: 600; }
   .hidden { display: none !important; }
 
+  @media (max-width: 920px) { header { gap: 8px; } .toggles { gap: 12px; } .hgroup { gap: 8px; } }
   @media (max-width: 980px) { .sidebar { width: 0; display: none; } }
   @media (max-width: 860px) { main { flex-direction: column; } .chat { flex: 1 1 50%; min-width: 0; border-right: 0; border-bottom: 1px solid #1e2430; } .workspace { flex: 1 1 50%; } }
 </style>
 </head>
 <body>
   <header>
-    <button class="tbtn" id="sbToggle" title="Toggle history">&#9776;</button>
-    <h1><span class="dot" id="dot"></span> Local LLM Builder</h1>
-    <div class="picker">
-      <button class="picker-btn" id="pickerBtn" type="button"><span class="name" id="pickerName">Loading...</span><span class="caret">&#9660;</span></button>
-      <ul class="menu" id="menu" hidden></ul>
+    <div class="hgroup">
+      <button class="tbtn" id="sbToggle" title="Toggle history">&#9776;</button>
+      <h1><span class="dot" id="dot"></span> Local LLM Builder</h1>
+      <div class="picker">
+        <button class="picker-btn" id="pickerBtn" type="button"><span class="name" id="pickerName">Loading...</span><span class="caret">&#9660;</span></button>
+        <ul class="menu" id="menu" hidden></ul>
+      </div>
     </div>
-    <div class="grow"></div>
-    <label class="toggle" id="agentLabel" title="Let the model run commands + write files (asks before each)"><input type="checkbox" id="agentChk"><span class="sw"></span> Agent</label>
-    <label class="toggle" id="goalLabel" title="Goal Mode: forge a measurable goal, agree to it, then pursue it (build &rarr; score &rarr; iterate) and log what it learns"><input type="checkbox" id="goalChk"><span class="sw"></span> &#127919; Goal</label>
-    <button class="tbtn" id="dlBtn" title="Download the current app" disabled>Download</button>
+    <div class="toggles">
+      <span class="togwrap">
+        <label class="toggle" id="agentLabel" title="Let the model run commands + write files (asks before each)"><input type="checkbox" id="agentChk"><span class="sw"></span> Agent</label>
+        <span class="info" tabindex="0" role="button" aria-label="What does Agent mode do?">i<span class="tip"><b>Agent mode</b> lets the model use real tools — run terminal commands, write files, fetch &amp; <b>clone websites</b> — asking your <b>approval</b> before anything changes your computer. Off by default for safety. Needs <code>--agent</code>.</span></span>
+      </span>
+      <span class="togwrap">
+        <label class="toggle" id="goalLabel" title="Goal Mode: forge a measurable goal, agree to it, then pursue it (build &rarr; score &rarr; iterate) and log what it learns"><input type="checkbox" id="goalChk"><span class="sw"></span> &#127919; Goal</label>
+        <span class="info" tabindex="0" role="button" aria-label="What does Goal mode do?">i<span class="tip"><b>Goal mode</b> turns your request into a <b>measurable goal you approve</b>, then builds, scores and improves it toward that target on its own — and logs what it learned. Best for <b>cloning a real site</b> to a fidelity&nbsp;%. Needs <code>--agent</code>.</span></span>
+      </span>
+    </div>
+    <div class="hgroup hright">
+      <button class="tbtn" id="dlBtn" title="Download the current app" disabled>Download</button>
+    </div>
   </header>
 
   <main>
