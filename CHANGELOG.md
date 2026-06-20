@@ -4,6 +4,26 @@ All notable changes to this project are documented here. Format based on
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/); this project aims to
 follow [Semantic Versioning](https://semver.org/).
 
+## [1.12.2] — 2026-06-21
+
+### Fixed
+- **Turning Agent on no longer breaks website cloning.** Agent mode used to route *everything* —
+  including a clone request — into the raw approve-to-run tool loop, which is built for
+  shell / multi-file tasks, not web building. On a clone it would fire model-driven `<inspect>`
+  calls whose results got truncated, loop on "incomplete, retry", burn through the context, and
+  dump a half-written HTML block in chat **with no preview**. Now a clone (and Goal mode) always
+  uses the build/clone path — inspect → build → score → **live preview** — regardless of the
+  Agent toggle; the raw tool loop is reserved for genuinely non-web tasks. *(Verified: an
+  Agent-on clone of example.com now renders and scores 82%, with zero agent-loop artifacts.)*
+
+### Added
+- **Auto-recommend the right mode.** When a request would clearly benefit from a mode that's off,
+  the builder offers it inline before running — *"🎯 This looks like a site clone — turn on Goal
+  mode to set a fidelity target and iterate to it?"* for a clone, or *"🤖 … turn on Agent for
+  shell + file tools"* for a multi-file / backend task — with **Turn on & continue · Continue
+  without · Don't suggest again**. The powerful modes now find the user instead of hiding in a
+  toggle. Nothing is forced; the safe defaults are unchanged.
+
 ## [1.12.1] — 2026-06-21
 
 ### Changed

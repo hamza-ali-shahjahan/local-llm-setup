@@ -45,7 +45,7 @@ param(
   [switch]$Help
 )
 
-$AppVersion = '1.12.1'   # NB: not $Version — that name is the -Version switch param
+$AppVersion = '1.12.2'   # NB: not $Version — that name is the -Version switch param
 $Ctx = 8192             # default context window — big enough for real work, light on RAM
 $HomeDir = if ($env:USERPROFILE) { $env:USERPROFILE } else { $HOME }
 $ChatDir = Join-Path $HomeDir '.local-llm-setup\chat'   # where the chat page is written
@@ -1089,6 +1089,32 @@ function goalVerdictCard(g, reached, finalScore, runN) {
   else { tone = "#7fd0ff"; line = "<b>Built to the goal.</b> No automatic scorer for this kind of ask — acceptance is by inspection."; }
   return '<div class="tasks" style="margin-top:9px"><div class="tk"><span class="tki" style="border:0;color:' + tone + '">&#9678;</span><span>' + line + (runN ? ' <span class="meta">· logged (run #' + runN + ')</span>' : '') + '</span></div></div>';
 }
+/* ---------- Auto-recommend Agent / Goal when the task clearly benefits ---------- */
+// A clone benefits from Goal (a fidelity target + iterate-to-it); a multi-file / backend /
+// tooling task benefits from Agent (shell + file tools). Suggest the missing one — never
+// force it, and let the user dismiss suggestions for the session.
+function modeSuggestion(text, auto, agentOn, goalOn) {
+  try { if (sessionStorage.getItem("llm.noSuggest")) return null; } catch (e) {}
+  if (auto.cloneUrl && !goalOn) return {
+    mode: "goal", title: "🎯 This looks like a site clone",
+    body: "<b>Goal mode</b> sets a fidelity target and iterates the clone toward it — pausing for your approval on the goal first. It won't change how the clone renders, just how hard it tries to match. Turn it on?" };
+  const agentTask = /\b(multi[- ]?file|several files|back[- ]?end|database|\bAPI\b|server|full[- ]?stack|npm\b|pip\b|install|scaffold|run (?:the|a|my)|execute|shell|command|\bCLI\b)\b/i.test(text);
+  if (agentTask && !auto.cloneUrl && !agentOn) return {
+    mode: "agent", title: "🤖 This looks like a multi-file / tooling task",
+    body: "<b>Agent mode</b> gives the model real tools — run terminal commands and write files (it asks your approval before each). Turn it on for this?" };
+  return null;
+}
+function modeNudge(body, sug) {
+  return new Promise(resolve => {
+    body.innerHTML = '<div class="goal"><h4>' + sug.title + '</h4><div class="cap">' + sug.body + '</div>'
+      + '<div class="gbtns"><button class="ok yes">Turn on &amp; continue</button><button class="adj no">Continue without</button><button class="skip never">Don\'t suggest again</button></div></div>';
+    scrollDown();
+    const card = body.querySelector(".goal");
+    card.querySelector(".yes").addEventListener("click", () => { card.classList.add("locked", "agreed"); resolve("on"); });
+    card.querySelector(".no").addEventListener("click", () => { card.classList.add("locked", "skipped"); resolve("off"); });
+    card.querySelector(".never").addEventListener("click", () => { try { sessionStorage.setItem("llm.noSuggest", "1"); } catch (e) {} card.classList.add("locked", "skipped"); resolve("off"); });
+  });
+}
 // Throttle streaming re-renders to ~1/66ms so the bubble doesn't reflow on every
 // token — that thrash is what made scrolling up jerk. The post-stream final paint
 // always runs, so nothing is lost by skipping intermediate frames.
@@ -1436,11 +1462,22 @@ async function send() {
   let body = null;
   let goalSpec = "";                                              // a forged build spec for a non-clone goal
   // ---- route: which brain, and do we plan first? ----
-  const agentRun = agentChk.checked && agentReady;
-  const goalRun = goalChk.checked && agentReady && !agentRun;     // Goal Mode: needs the server; off in Agent mode
+  let agentRun = agentChk.checked && agentReady;
+  let goalRun = goalChk.checked && agentReady;                    // Goal Mode: needs the server (works alongside Agent)
   const auto = route(text);                                       // also detects a "clone <url>" request
+  // ---- Auto-recommend a mode when the task clearly benefits and it's off (one card, session-dismissible) ----
+  if (agentReady && (!agentRun || !goalRun)) {
+    const sug = modeSuggestion(text, auto, agentRun, goalRun);
+    if (sug) {
+      const choice = await modeNudge(addMsg("assistant", ""), sug);
+      if (choice === "on") {
+        if (sug.mode === "goal") { goalChk.checked = true; goalRun = true; }
+        else { agentChk.checked = true; agentRun = true; }
+      }
+    }
+  }
   let r = auto.cloneUrl
-    ? auto                                                        // a clone request always clones — even with Agent on
+    ? auto                                                        // a clone ALWAYS uses the clone path (preview + score), never the raw agent loop
     : (autoMode && !agentRun) ? auto
     : { kind: agentRun ? "agent" : (currentApp ? "edit" : "build"), model: currentModel || bestCoder, plan: false };
   try {
@@ -1460,8 +1497,10 @@ async function send() {
         else goalSpec = goalSpecText(g);
       }
     }
-    if (agentRun) {
-      // ---- agent mode: multi-step approve-to-run tool loop ----
+    if (agentRun && !r.cloneUrl && !goalActive) {
+      // ---- agent mode: multi-step approve-to-run tool loop. Clones + Goal mode are
+      // deliberately NOT routed here — they use the build/clone path (live preview +
+      // fidelity score); the raw tool loop is for shell / multi-file / non-web tasks. ----
       let steps = 0;
       while (steps++ < 12) {
         body = addMsg("assistant", "");
