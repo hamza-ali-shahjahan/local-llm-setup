@@ -45,7 +45,7 @@ param(
   [switch]$Help
 )
 
-$AppVersion = '1.11.1'   # NB: not $Version — that name is the -Version switch param
+$AppVersion = '1.12.0'   # NB: not $Version — that name is the -Version switch param
 $Ctx = 8192             # default context window — big enough for real work, light on RAM
 $HomeDir = if ($env:USERPROFILE) { $env:USERPROFILE } else { $HOME }
 $ChatDir = Join-Path $HomeDir '.local-llm-setup\chat'   # where the chat page is written
@@ -439,6 +439,29 @@ function Write-ChatHtml {
   .approve .no { background: #2a3140; color: #c7d0dd; }
   .approve.done .btns { display: none; }
   .approve.done .lbl::after { content: " — done"; color: #2ecc71; }
+  /* Goal Mode: the forged goal card + its agree / adjust / skip gate */
+  .goal { background: #0f131b; border: 1px solid #2a3f63; border-radius: 11px; padding: 13px 15px; margin: 2px 0; }
+  .goal h4 { margin: 0 0 7px; font-size: 13.5px; color: #cfe3ff; display: flex; align-items: center; gap: 7px; }
+  .goal .cap { color: #dbe6f2; font-size: 13.5px; margin-bottom: 10px; }
+  .goal .grid { display: grid; grid-template-columns: auto 1fr; gap: 5px 12px; font-size: 12.5px; align-items: start; }
+  .goal .k { color: #6b7787; white-space: nowrap; }
+  .goal .v { color: #b6c0cf; white-space: pre-wrap; }
+  .goal .v b { color: #7fd0ff; font-weight: 600; }
+  .goal .verdict { margin-top: 10px; padding-top: 9px; border-top: 1px solid #1b2233; font-size: 12px; color: #9fb0c4; line-height: 1.5; }
+  .goal .verdict b { color: #c2cedd; }
+  .goal .gbadge { font-size: 10px; font-weight: 600; color: #aef0c4; background: #14271c; border: 1px solid #2a5a3c; border-radius: 5px; padding: 1px 6px; }
+  .goal .gbadge.warn { color: #e8b84b; background: #271f12; border-color: #5a4a2a; }
+  .goal .gbtns { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+  .goal .gbtns button { border: 0; border-radius: 7px; padding: 6px 13px; font-size: 13px; font-weight: 600; cursor: pointer; }
+  .goal .gbtns .ok { background: #2b6cff; color: #fff; }
+  .goal .gbtns .adj { background: #2a3140; color: #c7d0dd; }
+  .goal .gbtns .skip { background: transparent; color: #8a95a5; border: 1px solid #2a3140; }
+  .goal .adjbox { display: none; margin-top: 10px; }
+  .goal .adjbox.on { display: block; }
+  .goal .adjbox textarea { width: 100%; box-sizing: border-box; background: #0a0d13; color: #e6e6e6; border: 1px solid #2a3140; border-radius: 7px; padding: 8px 10px; font: inherit; font-size: 12.5px; resize: vertical; min-height: 48px; }
+  .goal.locked .gbtns, .goal.locked .adjbox { display: none; }
+  .goal.agreed { border-color: #2a5a3c; }
+  .goal.skipped { border-color: #2a3140; opacity: .85; }
 
   .empty { min-height: 70%; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; color: #5b6472; }
   .empty h2 { color: #aab4c4; font-weight: 600; margin: 0 0 6px; }
@@ -490,6 +513,7 @@ function Write-ChatHtml {
     </div>
     <div class="grow"></div>
     <label class="toggle" id="agentLabel" title="Let the model run commands + write files (asks before each)"><input type="checkbox" id="agentChk"><span class="sw"></span> Agent</label>
+    <label class="toggle" id="goalLabel" title="Goal Mode: forge a measurable goal, agree to it, then pursue it (build &rarr; score &rarr; iterate) and log what it learns"><input type="checkbox" id="goalChk"><span class="sw"></span> &#127919; Goal</label>
     <button class="tbtn" id="dlBtn" title="Download the current app" disabled>Download</button>
   </header>
 
@@ -606,6 +630,21 @@ const SPEC_SYSTEM =
   "States: <empty / loading / error / active states that matter>\n" +
   "Style: <one line — modern, clean, shadcn-like; mention accent colour + layout>\n" +
   "Be specific and opinionated so nothing is left ambiguous. Keep it under ~14 lines total. Do not write HTML.";
+// Goal Mode's "forge" brain: turn a request into a measurable, REACHABLE goal as JSON,
+// banking the write-a-goal discipline — pin the exact metric + feasibility-check the target.
+const GOAL_SPEC_SYSTEM =
+  "You convert a build request into a MEASURABLE, REACHABLE goal, then output ONLY a JSON object — no prose, no markdown fence, nothing before or after. " +
+  "Exact shape:\n" +
+  '{"capability":"one sentence — given X the app does Y, concrete and observable",' +
+  '"metric":{"name":"the single thing measured","how":"how it is computed / what reports it","target":<integer 40-85 or null>},' +
+  '"evals":["a concrete test with a number","a second concrete test with a number"],' +
+  '"acceptance":"when it is done",' +
+  '"nonGoals":["what this explicitly is NOT"],' +
+  '"checkA":"the dumbest output that could score high, and the guard that stops it",' +
+  '"checkB":"is the target reachable for a local 14B coder? if not, the reachable target and the lever that raises the ceiling"}\n' +
+  "When the request clones/recreates a real web page, the metric is STRUCTURAL clone fidelity (palette + fonts + sections + headings + motion + tokens, 0-100, from the scorer) — target around 75. " +
+  "A local 14B rebuilding from a text digest cannot match pixels (visual fidelity plateaus ~30%): never set a high visual target, and name 'a vision model' as the lever for visual gains. " +
+  "At least 2 evals, each with a number. Keep every field to one short sentence. Output JSON ONLY.";
 
 const el = id => document.getElementById(id);
 const log = el("log"), empty = el("empty"), input = el("input"), sendBtn = el("send");
@@ -614,6 +653,7 @@ const pickerBtn = el("pickerBtn"), pickerName = el("pickerName"), menu = el("men
 const preview = el("preview"), codeview = el("codeview"), termview = el("termview"), wsempty = el("wsempty"), wsbuild = el("wsbuild"), wsload = el("wsload"), refreshBtn = el("refreshBtn");
 const tabPreview = el("tabPreview"), tabCode = el("tabCode"), tabTerm = el("tabTerm"), dlBtn = el("dlBtn");
 const sidebar = el("sidebar"), chatlist = el("chatlist"), agentChk = el("agentChk"), agentLabel = el("agentLabel");
+const goalChk = el("goalChk"), goalLabel = el("goalLabel");
 
 let messages = [], busy = false, currentModel = "", currentApp = "", stick = true, buildingApp = false;
 let currentId = newId(), agentReady = false;
@@ -621,6 +661,7 @@ let abortCtl = null;                 // aborts the in-flight generation (Stop bu
 let pendingBuild = null;             // { body, lines } awaiting the preview's load event
 let buildSpec = "", repairHtml = ""; // plan spec + repair status; the prefix is rebuilt live each paint
 let planOpen = false;                // is the plan card expanded? persisted across streaming repaints
+let goalActive = false, goalTarget = 0, goalMeta = null, goalRounds = [];  // Goal Mode: the agreed goal under pursuit + its per-round scores
 const buildingIds = new Set();       // project ids generating right now -> sidebar status dot
 // model routing: Auto picks the best brain per task; the picker is an override
 let autoMode = true;
@@ -796,6 +837,9 @@ async function detectAgent() {
     agentChk.checked = false; agentChk.disabled = true;
     agentLabel.title = "Agent tools need the agent server: run  ./local-llm-setup.sh --agent";
     agentLabel.style.opacity = ".5";
+    goalChk.checked = false; goalChk.disabled = true;
+    goalLabel.title = "Goal Mode needs the agent server: run  ./local-llm-setup.sh --agent";
+    goalLabel.style.opacity = ".5";
   }
 }
 
@@ -914,6 +958,112 @@ function improvePrompt(sc) {
   if (typeof sc.token_match === "number" && sc.token_match < 70) L.push("- Match the original's corner radii, box-shadows and type scale more closely (your design tokens are off).");
   L.push("Output the COMPLETE updated HTML file in ONE ```html block. Keep everything that already works; only close these gaps.");
   return L.join("\n");
+}
+/* ---------- Goal Mode: forge → agree → pursue → learn ---------- */
+// Pull a JSON object out of a model reply — it may wrap it in prose or a ```json
+// fence, and reasoners prepend <think>…</think>. Returns the object or null.
+function parseGoalJSON(raw) {
+  let s = stripThink(String(raw || "")).replace(/```(?:json)?/gi, "");
+  const i = s.indexOf("{"), j = s.lastIndexOf("}");
+  if (i < 0 || j <= i) return null;
+  try { return JSON.parse(s.slice(i, j + 1)); } catch (e) { return null; }
+}
+// A sensible goal even when the model's JSON is unusable — so Goal Mode never dead-ends.
+function fallbackGoal(text, auto) {
+  const clone = !!auto.cloneUrl;
+  return {
+    capability: clone ? "Reproduce " + auto.cloneUrl + " as one self-contained page, matching its layout, palette and fonts."
+                      : "Build: " + text.slice(0, 120),
+    metric: clone ? { name: "Structural clone fidelity", how: "the scorer vs the real page", target: 75 }
+                  : { name: "Acceptance by inspection", how: "manual review against the spec", target: null },
+    evals: clone ? ["Fidelity ≥ 75% on a fresh run", "Nav + hero + main sections all present"]
+                 : ["The described features work", "Renders with no runtime errors"],
+    acceptance: clone ? "Fidelity hits target on a fresh run, or an honest ceiling is reported."
+                      : "The app matches the spec on inspection.",
+    nonGoals: clone ? ["Not pixel-perfect (a local model can't see)", "No backend beyond what's asked"]
+                    : ["No backend / persistence beyond what's asked"],
+    checkA: "A blank page can't fake it — with no palette / sections / headings the structural score stays low.",
+    checkB: clone ? "A local 14B from a text digest plateaus ~30% visual; structural target capped at 75. Lever: a vision model."
+                  : "No automatic scorer for this kind of ask — acceptance is by inspection, not a numeric loop."
+  };
+}
+// Forge a measurable goal from the ask (reasoner -> JSON), normalised + made honest.
+async function forgeGoal(text, auto, note, body) {
+  if (body) { body.innerHTML = taskList([{ status: "active", label: "Forging a measurable goal", meta: (bestReasoner || bestCoder) }]); scrollDown(); }
+  let g = null;
+  try {
+    const ask = text + (note ? "\n\nRevise the goal per this feedback: " + note : "");
+    const raw = await callModel(() => {}, abortCtl.signal,
+      { model: bestReasoner || bestCoder, system: GOAL_SPEC_SYSTEM, messages: [{ role: "user", content: ask }] });
+    g = parseGoalJSON(raw);
+  } catch (e) { if (e.name === "AbortError") throw e; }
+  if (!g || !g.capability) g = fallbackGoal(text, auto);
+  // the honest truth about scorability is OURS, not the model's: we can only auto-score a
+  // CLONE (structural fidelity vs the real page). Force the card consistent with that.
+  g.cloneUrl = auto.cloneUrl || null;
+  g.autoScored = !!g.cloneUrl;
+  if (!g.metric || typeof g.metric !== "object") g.metric = {};
+  if (g.autoScored) { const t = +g.metric.target; g.metric.target = (t >= 40 && t <= 88) ? t : 75; if (!g.metric.name) g.metric.name = "Structural clone fidelity"; }
+  else { g.metric.target = null; if (!g.metric.name) g.metric.name = "Acceptance by inspection"; }
+  if (!Array.isArray(g.evals)) g.evals = [];
+  if (!Array.isArray(g.nonGoals)) g.nonGoals = [];
+  return g;
+}
+// The card's inner HTML (no outer .goal wrapper) — capability, metric, evals, checks.
+function goalCardInner(g) {
+  const m = g.metric || {};
+  const badge = g.autoScored ? '<span class="gbadge">auto-scored</span>' : '<span class="gbadge warn">by inspection</span>';
+  const cell = v => escapeHtml(String(v)).replace(/\*\*([^*]+?)\*\*/g, "<b>$1</b>");
+  const row = (k, v) => v ? '<div class="k">' + k + '</div><div class="v">' + cell(v) + '</div>' : "";
+  let h = '<h4>&#127919; Goal ' + badge + '</h4><div class="cap">' + escapeHtml(g.capability) + '</div><div class="grid">';
+  h += row("Metric", (m.name || "—") + (m.target != null ? " · target **" + m.target + "%**" : "") + (m.how ? " · " + m.how : ""));
+  if (g.evals.length) h += row("Evals", g.evals.map(e => "• " + e).join("\n"));
+  h += row("Accept", g.acceptance);
+  if (g.nonGoals.length) h += row("Non-goals", g.nonGoals.join(" · "));
+  h += '</div>';
+  let v = "";
+  if (g.checkB) v += "<b>Feasibility:</b> " + escapeHtml(g.checkB);
+  if (g.checkA) v += (v ? "<br>" : "") + "<b>Robustness:</b> " + escapeHtml(g.checkA);
+  if (v) h += '<div class="verdict">' + v + '</div>';
+  return h;
+}
+// Render the card + the Agree / Adjust / Skip gate. Resolves 'agree' | 'skip' | {note}.
+function goalGate(body, g) {
+  return new Promise(resolve => {
+    body.innerHTML = '<div class="goal">' + goalCardInner(g)
+      + '<div class="adjbox"><textarea placeholder="What should change? target, sections, the metric…"></textarea><div class="gbtns"><button class="ok rf">Re-forge</button></div></div>'
+      + '<div class="gbtns main"><button class="ok ag">Agree &amp; pursue</button><button class="adj aj">Adjust</button><button class="skip sk">Skip — just build</button></div></div>';
+    scrollDown();
+    const card = body.querySelector(".goal");
+    card.querySelector(".ag").addEventListener("click", () => { card.classList.add("locked", "agreed"); resolve("agree"); });
+    card.querySelector(".sk").addEventListener("click", () => { card.classList.add("locked", "skipped"); resolve("skip"); });
+    card.querySelector(".aj").addEventListener("click", () => { card.querySelector(".adjbox").classList.add("on"); card.querySelector(".gbtns.main").style.display = "none"; card.querySelector(".adjbox textarea").focus(); });
+    card.querySelector(".rf").addEventListener("click", () => { const note = card.querySelector(".adjbox textarea").value.trim(); resolve({ note: note || "make it sharper and more measurable" }); });
+  });
+}
+// Turn an agreed goal into a build spec the coder implements (non-clone goals).
+function goalSpecText(g) {
+  const L = ["Build to THIS goal — implement every point:", "Capability: " + g.capability];
+  if (g.evals && g.evals.length) L.push("Must satisfy:\n" + g.evals.map(e => "- " + e).join("\n"));
+  if (g.acceptance) L.push("Done when: " + g.acceptance);
+  if (g.nonGoals && g.nonGoals.length) L.push("Out of scope: " + g.nonGoals.join("; "));
+  return L.join("\n");
+}
+// Append a pursued-goal record to the learning/limits log; returns the run count.
+async function logGoalRun(rec) {
+  try {
+    const j = await (await fetch(AGENT_URL + "/api/agent/goallog", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ run: rec }) })).json();
+    return j && j.ok ? j.count : null;
+  } catch (e) { return null; }
+}
+// The honest end-of-goal verdict: reached target, or plateaued at a ceiling (+ the lever).
+function goalVerdictCard(g, reached, finalScore, runN) {
+  const t = g.metric && g.metric.target;
+  let line, tone;
+  if (reached) { tone = "#2ecc71"; line = "<b>Goal reached</b> — " + finalScore + "% &ge; " + t + "% target."; }
+  else if (finalScore != null) { tone = "#e8b84b"; line = "<b>Plateaued at " + finalScore + "%</b> (target " + t + "%) — near the structural ceiling for a local 14B from a text spec. The lever that raises it is a <b>vision model</b> (see + self-correct layout)."; }
+  else { tone = "#7fd0ff"; line = "<b>Built to the goal.</b> No automatic scorer for this kind of ask — acceptance is by inspection."; }
+  return '<div class="tasks" style="margin-top:9px"><div class="tk"><span class="tki" style="border:0;color:' + tone + '">&#9678;</span><span>' + line + (runN ? ' <span class="meta">· logged (run #' + runN + ')</span>' : '') + '</span></div></div>';
 }
 // Throttle streaming re-renders to ~1/66ms so the bubble doesn't reflow on every
 // token — that thrash is what made scrolling up jerk. The post-stream final paint
@@ -1258,15 +1408,34 @@ async function send() {
   addMsg("user", text); sessionMessages.push({ role: "user", content: text });
   abortCtl = new AbortController();
   buildSpec = ""; repairHtml = ""; buildingApp = false; _lastPaint = 0; planOpen = false;
+  goalActive = false; goalTarget = 0; goalMeta = null; goalRounds = [];
   let body = null;
+  let goalSpec = "";                                              // a forged build spec for a non-clone goal
   // ---- route: which brain, and do we plan first? ----
   const agentRun = agentChk.checked && agentReady;
+  const goalRun = goalChk.checked && agentReady && !agentRun;     // Goal Mode: needs the server; off in Agent mode
   const auto = route(text);                                       // also detects a "clone <url>" request
-  const r = auto.cloneUrl
+  let r = auto.cloneUrl
     ? auto                                                        // a clone request always clones — even with Agent on
     : (autoMode && !agentRun) ? auto
     : { kind: agentRun ? "agent" : (currentApp ? "edit" : "build"), model: currentModel || bestCoder, plan: false };
   try {
+    // ---- Goal Mode: forge a measurable goal, get the user's agreement, THEN pursue + log ----
+    if (goalRun && (r.kind === "build" || r.cloneUrl)) {
+      const gb = addMsg("assistant", "");
+      let g = await forgeGoal(text, auto, "", gb);
+      let decision;
+      while (true) {
+        decision = await goalGate(gb, g);
+        if (decision === "agree" || decision === "skip") break;
+        g = await forgeGoal(text, auto, decision.note, gb);       // re-forge with the adjustment, then re-gate
+      }
+      if (decision === "agree") {
+        goalActive = true; goalMeta = g; goalRounds = [];
+        if (g.cloneUrl) { r = { kind: "build", model: bestCoder, plan: false, cloneUrl: g.cloneUrl }; goalTarget = (g.metric && +g.metric.target) || 75; }
+        else goalSpec = goalSpecText(g);
+      }
+    }
     if (agentRun) {
       // ---- agent mode: multi-step approve-to-run tool loop ----
       let steps = 0;
@@ -1294,7 +1463,7 @@ async function send() {
       body.innerHTML = render(stripThink(acc));
     } else {
       // ---- build / edit / clone ----
-      let spec = "";
+      let spec = goalSpec || "";
       // clone: OBSERVE the real page first (palette, fonts, sections), then build to it
       if (r.cloneUrl) {
         body = addMsg("assistant", "");
@@ -1377,13 +1546,20 @@ async function send() {
             body.innerHTML = planPrefix() + repairHtml + prose + buildTasks(curLines, true, true);
             scrollDown();
           }
+          // generic goal (no auto-scorer): the build IS the deliverable — log it honestly.
+          if (goalActive && !r.cloneUrl) {
+            const runN = await logGoalRun({ kind: "build", capability: goalMeta.capability, metric: goalMeta.metric, autoScored: false, reached: null, evals: goalMeta.evals });
+            body.innerHTML = planPrefix() + repairHtml + prose + buildTasks(curLines, true, true) + goalVerdictCard(goalMeta, false, null, runN);
+            scrollDown();
+          }
           // clone: score the rebuild, then ITERATE toward a fidelity target — feed the
           // gaps back to the coder, rebuild, re-score; stop on target, no-gain, or cap.
           if (r.cloneUrl) {
             try {
-              const TARGET = 75, MAX_ROUNDS = 2;
+              const TARGET = goalActive && goalTarget ? goalTarget : 75, MAX_ROUNDS = goalActive ? 3 : 2;
               let sc = await scoreClone(r.cloneUrl, sessionApp);
               const first = sc ? sc.score : null;
+              if (goalActive && sc) goalRounds.push({ round: 0, score: sc.score });
               if (sc) { body.innerHTML = planPrefix() + repairHtml + prose + buildTasks(curLines, true, true) + fidelityCard(sc); scrollDown(); }
               let round = 0;
               while (sc && sc.score < TARGET && round < MAX_ROUNDS && sid === currentId) {
@@ -1406,11 +1582,18 @@ async function send() {
                 const improved = nsc.score > sc.score;
                 repairHtml = taskList([{ status: improved ? "done" : "fail", label: "Refined the clone (round " + round + ")", meta: sc.score + "% → " + nsc.score + "%" }]);
                 sc = nsc;
+                if (goalActive) goalRounds.push({ round, score: nsc.score });
                 body.innerHTML = planPrefix() + repairHtml + prose + buildTasks(curLines, true, true) + fidelityCard(sc, first);
                 scrollDown();
                 if (!improved) break;   // a round that didn't help -> stop
               }
               if (sc) { body.innerHTML = planPrefix() + repairHtml + prose + buildTasks(curLines, true, true) + fidelityCard(sc, first); scrollDown(); }
+              if (goalActive && sc) {
+                const reached = sc.score >= TARGET;
+                const runN = await logGoalRun({ kind: "clone", url: r.cloneUrl, capability: goalMeta.capability, metric: goalMeta.metric, target: TARGET, autoScored: true, initial_score: first, final_score: sc.score, rounds: goalRounds, reached: reached, ceiling: reached ? null : sc.score, lever: reached ? null : "vision model" });
+                body.innerHTML = planPrefix() + repairHtml + prose + buildTasks(curLines, true, true) + fidelityCard(sc, first) + goalVerdictCard(goalMeta, reached, sc.score, runN);
+                scrollDown();
+              }
             } catch (e) { if (e.name === "AbortError") throw e; }
           }
         }
@@ -1483,6 +1666,10 @@ function Write-AgentServer {
 #                                        that INCLUDES the .git history. An optional
 #                                        remote is only *configured*, never pushed —
 #                                        pushing uses the user's own GitHub token.
+#   POST /api/agent/goallog {run}     -> append one pursued-goal record to the           (local-file write)
+#                                        learning/limits log (~/.local-llm-setup/goal_runs.jsonl);
+#                                        GET /api/agent/goalruns reads it back. This is the
+#                                        Goal-Mode loop persisted: what it reached vs. the ceiling.
 #
 # These read/inspect/extract/score tools are what let the builder CLONE a real site:
 # observe the page, rebuild it, then SCORE how close the rebuild is.
@@ -1498,7 +1685,7 @@ function Write-AgentServer {
 # An approved command itself is not sandboxed (an approved `rm -rf ~` still runs) —
 # UI approval is the guardrail for mutations. Harden before any default ship.
 
-import json, os, re, socket, ipaddress, subprocess, base64, shutil, tempfile, struct, glob, sys, urllib.request
+import json, os, re, socket, ipaddress, subprocess, base64, shutil, tempfile, struct, glob, sys, time, urllib.request
 from collections import Counter
 from html.parser import HTMLParser
 from urllib.parse import urljoin, urlsplit
@@ -1510,6 +1697,7 @@ CHAT_DIR  = os.path.join(HOME, ".local-llm-setup", "chat")
 WORKSPACE = os.path.realpath(os.path.join(HOME, ".local-llm-setup", "workspace"))
 os.makedirs(WORKSPACE, exist_ok=True)
 ORIGINS = {f"http://localhost:{PORT}", f"http://127.0.0.1:{PORT}"}
+GOAL_LOG = os.path.join(HOME, ".local-llm-setup", "goal_runs.jsonl")   # learning/limits log: one JSON line per pursued goal
 
 UA = "Mozilla/5.0 (LocalLLMBuilder; +http://localhost) AppleWebKit/537.36"
 FETCH_CAP = 2_000_000
@@ -2264,6 +2452,40 @@ def git_sync(path=".", message="Initial commit — scaffolded by Local LLM Build
                       + "   # uses YOUR GitHub credentials/token — not stored or sent by this tool"),
     }
 
+# ---------- goal runs: the learning / limits log ----------
+# One JSON line per pursued goal — the capability, the metric, every round's score, and
+# whether it reached target or hit a ceiling. This is the "test its limits by pushing to
+# the max" loop, persisted: over time it maps what this local setup can and can't reach,
+# and names the lever (a vision model) that would raise the ceiling.
+def append_goal_run(rec):
+    rec = dict(rec or {})
+    rec.setdefault("ts", int(time.time()))
+    os.makedirs(os.path.dirname(GOAL_LOG), exist_ok=True)
+    with open(GOAL_LOG, "a", encoding="utf-8") as f:
+        f.write(json.dumps(rec) + "\n")
+    n = 0
+    try:
+        with open(GOAL_LOG, encoding="utf-8") as f:
+            n = sum(1 for line in f if line.strip())
+    except Exception:
+        pass
+    return n
+
+def read_goal_runs(limit=100):
+    out = []
+    try:
+        with open(GOAL_LOG, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try: out.append(json.loads(line))
+                except Exception: pass
+    except FileNotFoundError:
+        pass
+    return out[-limit:]
+
+
 class H(BaseHTTPRequestHandler):
     def _cors(self):
         o = self.headers.get("Origin")
@@ -2285,10 +2507,13 @@ class H(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path.startswith("/api/agent/ping"):
             return self._json(200, {"ok": True, "workspace": WORKSPACE,
-                                    "tools": ["run", "write", "read", "fetch", "inspect", "extract", "score", "screenshot", "gitsync"],
+                                    "tools": ["run", "write", "read", "fetch", "inspect", "extract", "score", "screenshot", "gitsync", "goallog"],
+                                    "goal_runs": GOAL_LOG,
                                     "browser": bool(find_browser()) or _have_playwright(),
                                     "screenshot_backend": ("playwright" if _have_playwright()
                                                            else ("chrome" if find_browser() else None))})
+        if self.path.startswith("/api/agent/goalruns"):
+            return self._json(200, {"ok": True, "runs": read_goal_runs(), "path": GOAL_LOG})
         name = "index.html" if self.path in ("/", "") else os.path.basename(self.path.split("?")[0])
         fp = os.path.join(CHAT_DIR, name)
         if os.path.isfile(fp):
@@ -2380,13 +2605,19 @@ class H(BaseHTTPRequestHandler):
                                                                export=bool(req.get("export", True)))})
             except Exception as e:
                 return self._json(200, {"ok": False, "error": str(e)})
+        if path.startswith("/api/agent/goallog"):
+            try:
+                n = append_goal_run(req.get("run") or req)
+                return self._json(200, {"ok": True, "count": n, "path": GOAL_LOG})
+            except Exception as e:
+                return self._json(200, {"ok": False, "error": str(e)})
         return self._json(404, {"error": "unknown endpoint"})
     def log_message(self, *a): pass
 
 if __name__ == "__main__":
     print(f"Local LLM agent server -> http://{HOST}:{PORT}   (workspace: {WORKSPACE})")
     _be = "playwright (managed Chromium)" if _have_playwright() else ("chrome subprocess" if find_browser() else None)
-    print("  tools: run, write, read, fetch, inspect, extract, score, screenshot, gitsync"
+    print("  tools: run, write, read, fetch, inspect, extract, score, screenshot, gitsync, goallog"
           + (f"  [screenshots: {_be}]" if _be else "  [screenshots: install Playwright or Chrome to enable]"))
     ThreadingHTTPServer((HOST, PORT), H).serve_forever()
 '@

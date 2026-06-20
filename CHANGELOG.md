@@ -4,6 +4,31 @@ All notable changes to this project are documented here. Format based on
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/); this project aims to
 follow [Semantic Versioning](https://semver.org/).
 
+## [1.12.0] — 2026-06-21
+
+**Goal Mode** — the builder can turn a request into a *measurable goal*, get your
+agreement, then pursue it on its own and log what it learns.
+
+### Added
+- **🎯 Goal Mode (a new builder toggle).** When on, a build/clone request first **forges a
+  measurable goal** — the reasoner writes a capability statement, an exact metric + target,
+  ≥2 numeric evals, an acceptance rule, non-goals, and two hard-won checks (*pin the metric*
+  and *feasibility / ceiling*) — shows it as a card, and **waits for you to Agree** (or
+  Adjust / Skip). Nothing autonomous runs before you agree.
+- **Pursue + an honest verdict.** On Agree it pursues the goal — for a clone that's the
+  existing build → score → iterate-to-target loop, now driven by *your* agreed target — and
+  ends with a straight verdict: reached, or **plateaued at a ceiling** with the lever that
+  would raise it named (a vision model for visual fidelity). It never fakes a number: the
+  structural metric can't be gamed by a blank page, and goals with no automatic scorer
+  (e.g. "make it feel premium") are flagged *by inspection* and degrade to a plain build.
+- **A learning / limits log.** Every pursued goal is appended to
+  `~/.local-llm-setup/goal_runs.jsonl` (capability, metric, every round's score, reached vs.
+  ceiling) via a new `goallog` tool — so the setup *maps what it can and can't reach* over
+  time rather than guessing. Read it back at `GET /api/agent/goalruns`.
+- Verified end-to-end on the live builder (forge → agree → pursue → plateau-at-68% honest
+  ceiling → logged). New offline tests in `tests/test_goal_log.py` cover the log (round-trip
+  with a stamped timestamp, running count, malformed-line tolerance, limit, missing file).
+
 ## [1.11.1] — 2026-06-20
 
 ### Added
