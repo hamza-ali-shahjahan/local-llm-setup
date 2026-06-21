@@ -29,7 +29,7 @@
 #   ./local-llm-setup.sh --help
 #
 set -euo pipefail
-VERSION="1.13.0"
+VERSION="1.13.1"
 
 # ----------------------------------------------------------------------------
 # Pretty output (degrades gracefully if the terminal has no color)
@@ -562,11 +562,11 @@ write_chat_html() {
     <div class="toggles">
       <span class="togwrap">
         <label class="toggle" id="agentLabel" title="Let the model run commands + write files (asks before each)"><input type="checkbox" id="agentChk"><span class="sw"></span> Agent</label>
-        <span class="info" tabindex="0" role="button" aria-label="What does Agent mode do?">i<span class="tip"><b>Agent mode</b> lets the model use real tools — run terminal commands, write files, fetch &amp; <b>clone websites</b> — asking your <b>approval</b> before anything changes your computer. Off by default for safety. Needs <code>--agent</code>.</span></span>
+        <span class="info" tabindex="0" role="button" aria-label="What does Agent mode do?">i<span class="tip"><b>Agent mode</b> lets the model use real tools — run terminal commands, write files, fetch &amp; <b>clone websites</b> — asking your <b>approval</b> before anything changes your computer. Off by default for safety. Needs the <code>--agent</code> server.</span></span>
       </span>
       <span class="togwrap">
         <label class="toggle" id="goalLabel" title="Goal Mode: forge a measurable goal, agree to it, then pursue it (build &rarr; score &rarr; iterate) and log what it learns"><input type="checkbox" id="goalChk"><span class="sw"></span> &#127919; Goal</label>
-        <span class="info" tabindex="0" role="button" aria-label="What does Goal mode do?">i<span class="tip"><b>Goal mode</b> turns your request into a <b>measurable goal you approve</b>, then builds, scores and <b>iterates toward the target</b> on its own — logging what it learns. Works for any build (it iterates to a <b>requirements-coverage</b> target) and is especially strong at <b>cloning a real site</b> (a fidelity&nbsp;%). Needs <code>--agent</code>.</span></span>
+        <span class="info" tabindex="0" role="button" aria-label="What does Goal mode do?">i<span class="tip"><b>Goal mode</b> turns your request into a <b>measurable goal you approve</b>, then builds, scores and <b>iterates toward the target</b> on its own — logging what it learns. Works for <b>any build</b> (it iterates to a <b>requirements-coverage</b> target) and is especially strong at <b>cloning a real site</b> (a fidelity&nbsp;%). Runs on the built-in agent server — you do <b>not</b> need the Agent toggle on.</span></span>
       </span>
     </div>
     <div class="hgroup hright">
@@ -1173,7 +1173,7 @@ function modeSuggestion(text, auto, agentOn, goalOn) {
   try { if (sessionStorage.getItem("llm.noSuggest")) return null; } catch (e) {}
   if (auto.cloneUrl && !goalOn) return {
     mode: "goal", title: "🎯 This looks like a site clone",
-    body: "<b>Goal mode</b> sets a fidelity target and iterates the clone toward it — pausing for your approval on the goal first. It won't change how the clone renders, just how hard it tries to match. Turn it on?" };
+    body: "<b>Goal mode</b> sets a fidelity target and iterates the clone toward it, pausing for your approval first. (It works for <b>any build</b>, not just clones — and doesn't need the Agent toggle.) Turn it on?" };
   const agentTask = /\b(multi[- ]?file|several files|back[- ]?end|database|\bAPI\b|server|full[- ]?stack|npm\b|pip\b|install|scaffold|run (?:the|a|my)|execute|shell|command|\bCLI\b)\b/i.test(text);
   if (agentTask && !auto.cloneUrl && !agentOn) return {
     mode: "agent", title: "🤖 This looks like a multi-file / tooling task",
