@@ -890,11 +890,15 @@ function cloneSpecFromDigest(d) {
   } else if (d.counts && d.counts.images) {
     L.push("~" + d.counts.images + " images — use https://picsum.photos/seed/NAME/W/H placeholders.");
   }
-  // Light polish note — NOT an exhaustive token/motion dump (that's what overflowed the model).
-  const t = d.tokens || {}, m = d.motion || {}, polish = [];
-  if (t.radii && t.radii.length) polish.push("corner radius ~" + t.radii.slice(0, 2).join("/"));
-  if ((m.animations || []).length || (m.transitions || []).length) polish.push("subtle entrance animations + hover transitions like the original");
-  if (polish.length) L.push("Polish: " + polish.join("; ") + ".");
+  // Tokens are now COMPRESSED at the source (deduped/capped/rounded), so we can FORCE the
+  // high-signal ones as EXACT must-implement values — the lever for the radii/shadows/type-scale a
+  // 14B used to drop when handed an exhaustive dump.
+  const t = d.tokens || {}, m = d.motion || {}, tok = [];
+  if (t.radii && t.radii.length) tok.push("Corner radius: use exactly " + t.radii.slice(0, 2).join(" / ") + " on cards, buttons and inputs.");
+  if (t.shadows && t.shadows.length) tok.push("Box-shadow on raised cards/buttons: " + t.shadows[0] + ".");
+  if (t.font_sizes && t.font_sizes.length >= 2) tok.push("Type scale — use these EXACT sizes (largest = hero/H1 down to body/caption): " + t.font_sizes.slice(0, 5).join(", ") + ".");
+  if (tok.length) L.push("EXACT design tokens — implement these precisely, do not approximate:\n" + tok.map(x => "• " + x).join("\n"));
+  if ((m.animations || []).length || (m.transitions || []).length) L.push("Add subtle entrance animations + hover transitions like the original.");
   L.push("Match the layout, spacing and visual hierarchy closely. Output ONE complete responsive HTML file.");
   return L.join("\n");
 }
@@ -1620,13 +1624,15 @@ async function runTool(tool) {
 }
 
 /* ---------- the model call ---------- */
+const CLONE_CTX = 16384;   // clone gen/refine context window — room for the full render-based spec AND a complete HTML file out (8k truncated both)
 async function callModel(onTok, signal, opts) {
   opts = opts || {};
   const sys = opts.system || (agentChk.checked ? AGENT_SYSTEM : BUILDER_SYSTEM);
   const model = opts.model || currentModel;
   const msgs = opts.messages || messages;
+  const num_ctx = opts.num_ctx || 0;   // bigger window when the caller asks for it (clones)
   const resp = await fetch(API + "/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, signal,
-    body: JSON.stringify({ model, stream: true, messages: [{ role: "system", content: sys }, ...msgs] }) });
+    body: JSON.stringify({ model, stream: true, messages: [{ role: "system", content: sys }, ...msgs], ...(num_ctx ? { options: { num_ctx } } : {}) }) });
   const reader = resp.body.getReader(); const dec = new TextDecoder(); let buf = "", acc = "";
   while (true) {
     const { done, value } = await reader.read(); if (done) break;
@@ -1779,7 +1785,7 @@ async function send() {
       } else {
         sys = spec ? (BUILDER_SYSTEM + "\n\nBuild to THIS spec — implement every point:\n" + spec) : BUILDER_SYSTEM;
       }
-      const acc = await callModel(t => displayStreaming(body, t, sid), abortCtl.signal, { model: r.model, system: sys, messages: callMsgs });
+      const acc = await callModel(t => displayStreaming(body, t, sid), abortCtl.signal, { model: r.model, system: sys, messages: callMsgs, num_ctx: r.cloneUrl ? CLONE_CTX : 0 });
       sessionMessages.push({ role: "assistant", content: acc });
       const app = extractApp(acc);
       if (app) {
@@ -1888,7 +1894,7 @@ async function send() {
                 showTab("code"); scrollDown();
                 const facc = await callModel(t => displayStreaming(body, t, sid), abortCtl.signal,
                   { model: r.model, system: BUILDER_SYSTEM + "\n\nThis is a fidelity FIX of a clone you built earlier (shown above). Output the COMPLETE updated HTML file.",
-                    messages: sessionMessages.concat([{ role: "user", content: improvePrompt(sc) }]) });
+                    messages: sessionMessages.concat([{ role: "user", content: improvePrompt(sc) }]), num_ctx: CLONE_CTX });
                 const fapp = extractApp(facc);
                 if (!fapp) break;
                 sessionMessages[sessionMessages.length - 1] = { role: "assistant", content: facc };   // canonical app = refined
@@ -1914,7 +1920,7 @@ async function send() {
                 let vinfo = {};
                 try { vinfo = await fetch(AGENT_URL + "/api/agent/ping").then(x => x.json()); } catch (e) {}
                 if (vinfo && vinfo.vision) {
-                  const VROUNDS = goalActive ? 3 : 2;
+                  const VROUNDS = goalActive ? 4 : 3;
                   for (let vr = 1; vr <= VROUNDS && sid === currentId; vr++) {
                     repairHtml = taskList([{ status: "active", label: "Vision critique — comparing your clone to the original (round " + vr + " of " + VROUNDS + ")", meta: vinfo.vision }]);
                     body.innerHTML = planPrefix() + repairHtml + prose + buildTasks(curLines, true, true) + fidelityCard(sc, first) + (vbest ? visionCard(vbest) : "");
@@ -1934,7 +1940,7 @@ async function send() {
                     showTab("code"); scrollDown();
                     const vacc = await callModel(t => displayStreaming(body, t, sid), abortCtl.signal,
                       { model: r.model, system: BUILDER_SYSTEM + "\n\nThis is a VISUAL fidelity fix of a clone you built (shown above). A vision model compared your clone to a screenshot of the original and listed what's off. Apply the fixes and output the COMPLETE updated HTML file.",
-                        messages: sessionMessages.concat([{ role: "user", content: visionImprovePrompt(vc) }]) });
+                        messages: sessionMessages.concat([{ role: "user", content: visionImprovePrompt(vc) }]), num_ctx: CLONE_CTX });
                     const vapp = extractApp(vacc);
                     if (!vapp) break;
                     sessionMessages[sessionMessages.length - 1] = { role: "assistant", content: vacc };
@@ -2557,9 +2563,7 @@ def _merge_rendered(out, data):
             if cf and cf.lower() not in (x.lower() for x in ff): ff.append(cf)
     if ff:
         out["fonts"] = (ff + [f for f in out.get("fonts", []) if f.lower() not in (x.lower() for x in ff)])[:8]
-    out["tokens"] = {"font_sizes": data.get("font_sizes", []), "radii": data.get("radii", []),
-                     "shadows": data.get("shadows", []), "spacing": data.get("spacing", []),
-                     "backgrounds": data.get("backgrounds", [])}
+    out["tokens"] = _compress_tokens(data)
     # surface REAL background-image URLs (heroes / section bgs) the page actually paints,
     # so a clone can reuse them instead of placeholders. Computed styles are absolute.
     bgimgs = []
@@ -2572,6 +2576,32 @@ def _merge_rendered(out, data):
     out["states"] = data.get("states", [])
     out["responsive"] = data.get("responsive", {})
     out["visible_elements"] = data.get("visible_elements", 0)
+
+# Headroom-style compression for the design-token arrays: dedup + cap + round, and drop the
+# low-signal ones, so the digest — and every tool-output / clone-spec built from it — carries the
+# HIGH-signal values instead of a bloated dump the local model would just drop. The fidelity scorer
+# reads the same compressed tokens, and rounding px (18.52px -> 18px) actually helps clones match.
+def _compress_tokens(data):
+    def _round_px(v):
+        m = re.match(r'^\s*(-?\d+(?:\.\d+)?)\s*px', str(v or ""))
+        return (str(round(float(m.group(1)))) + "px") if m else (str(v or "").strip())
+    def _dedup(xs, n, px=False):
+        out, seen = [], set()
+        for x in (xs or []):
+            k = _round_px(x) if px else str(x or "").strip()
+            if k and k not in seen:
+                seen.add(k); out.append(k)
+            if len(out) >= n:
+                break
+        return out
+    return {
+        "font_sizes": _dedup(data.get("font_sizes"), 6, px=True),   # a compact type scale, not every size
+        "radii": _dedup(data.get("radii"), 3, px=True),
+        "shadows": _dedup(data.get("shadows"), 2),
+        "backgrounds": _dedup(data.get("backgrounds"), 4),
+        # spacing intentionally dropped — low signal for a clone, and the fidelity scorer ignores it
+    }
+
 
 def _digest_html(html, base=""):
     d = _Digest(base)
