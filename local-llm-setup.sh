@@ -29,7 +29,7 @@
 #   ./local-llm-setup.sh --help
 #
 set -euo pipefail
-VERSION="1.13.2"
+VERSION="1.13.3"
 
 # ----------------------------------------------------------------------------
 # Pretty output (degrades gracefully if the terminal has no color)
@@ -2011,11 +2011,23 @@ def _clean_font(decl):
             return tok[:60]
     return ""
 
+# Keep the font list REAL: drop pure numbers / lengths (from --font-size-* vars), icon fonts
+# (webflow-icons, fontawesome…) and "fallback" faces, and strip variable-font axis tokens so a
+# name is actually loadable ("Geist Variablefont Wght" -> "Geist"). Fixes the clone fonts-0%.
+_FONT_JUNK_RE = re.compile(r'^[\d.\s]+(px|em|rem|pt|%|vh|vw)?$|^(unset|inherit|initial|none|normal|auto|currentcolor)$|icon|webflow|glyph|fontawesome|material', re.I)
+def _clean_font_name(name):
+    name = re.sub(r'\b(variable\s*font|wght|opsz|slnt|ital|regular)\b', '', name or '', flags=re.I)
+    return re.sub(r'\s+', ' ', name).strip()
+def _is_real_font(name):
+    name = (name or "").strip().strip('"\'')
+    return bool(name) and len(name) <= 60 and "fallback" not in name.lower() and not _FONT_JUNK_RE.search(name)
+
 def _fonts(style_text, font_links):
     out = []
     def add(name):
-        name = (name or "").strip().strip('"\'')[:60]
-        if name and "fallback" not in name.lower() and name.lower() not in (x.lower() for x in out): out.append(name)
+        if not _is_real_font(name): return
+        name = _clean_font_name((name or "").strip().strip('"\'')[:60])
+        if name and name.lower() not in (x.lower() for x in out): out.append(name)
     for m in re.findall(r'@font-face[^{}]*\{[^{}]*?font-family\s*:\s*([^;}{]+)', style_text, re.I): add(_clean_font(m))  # loaded fonts
     for m in re.findall(r'--[\w-]*font[\w-]*\s*:\s*([^;}{]+)', style_text, re.I): add(_clean_font(m))                    # --font-* tokens
     for decl in _FONT_RE.findall(style_text): add(_clean_font(decl))                                                    # font-family decls
@@ -2226,7 +2238,11 @@ def _merge_rendered(out, data):
         for c in comp:
             if c and c not in seen: seen.append(c)
         out["palette"] = (seen + [c for c in out.get("palette", []) if c not in seen])[:16]
-    ff = [f for f in (data.get("fonts") or []) if f]
+    ff = []
+    for f in (data.get("fonts") or []):
+        if _is_real_font(f):
+            cf = _clean_font_name(f)
+            if cf and cf.lower() not in (x.lower() for x in ff): ff.append(cf)
     if ff:
         out["fonts"] = (ff + [f for f in out.get("fonts", []) if f.lower() not in (x.lower() for x in ff)])[:8]
     out["tokens"] = {"font_sizes": data.get("font_sizes", []), "radii": data.get("radii", []),
