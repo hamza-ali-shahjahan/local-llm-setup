@@ -29,7 +29,7 @@
 #   ./local-llm-setup.sh --help
 #
 set -euo pipefail
-VERSION="1.13.3"
+VERSION="1.14.0"
 
 # ----------------------------------------------------------------------------
 # Pretty output (degrades gracefully if the terminal has no color)
@@ -134,6 +134,7 @@ CTX=8192   # default context window — big enough for real work, light on RAM
 CHAT_DIR="${HOME}/.local-llm-setup/chat"   # where the bundled chat page is written
 CHAT_PORT=8765                              # localhost port the chat page is served on
 AGENT_PY="${HOME}/.local-llm-setup/agent-server.py"   # the optional --agent tool server
+AGENT_VENV="${HOME}/.local-llm-setup/.agent-venv"     # venv holding Playwright -> render-based cloning
 
 # Name of the context-tuned variant for a model tag, e.g.
 #   qwen2.5-coder:14b  ->  qwen2.5-coder-14b-8k
@@ -789,45 +790,46 @@ async function pageTheme(url) {
     return { brightness: Math.round(bright), theme: bright < 110 ? "dark" : "light" };
   } catch (e) { if (e.name === "AbortError") throw e; return null; }
 }
+// Turn a digest into a FOCUSED clone spec. A local 14B can't implement an exhaustive dump of
+// every token/animation/state — it drops most of it. So lead with the high-fidelity, achievable
+// dimensions (exact colours WITH roles, the real brand fonts, structure, real copy + images),
+// cut the low-signal noise (font-size lists, spacing, per-element hover diffs, framework), and
+// tell it plainly these are the priority. Focused input is what the model actually reproduces.
 function cloneSpecFromDigest(d) {
-  const L = ["Recreate this web page as ONE self-contained HTML file: " + (d.title || d.url)];
-  if (d.theme === "dark") L.push("IMPORTANT — this is a DARK-themed page: use a near-black / very dark background throughout (add class=\"dark\" to <html> and use bg-zinc-950 / bg-black on the body and sections) with light text. Do NOT produce a white page.");
-  else if (d.theme === "light") L.push("This is a light-themed page: light background with dark text.");
-  if (d.description) L.push("Tagline / description: " + d.description);
-  if (d.palette && d.palette.length) L.push("Use THESE exact colours from the site (hex/rgb): " + d.palette.join(", "));
-  if (d.fonts && d.fonts.length) L.push("Use THESE fonts (load from Google Fonts if needed): " + d.fonts.join(" · "));
-  if (d.sections && d.sections.length) L.push("Section order, top to bottom: " + d.sections.map(s => s.tag + (s.id ? "#" + s.id : "")).join(" › "));
-  if (d.headings && d.headings.length) L.push("Real headings / copy to reuse:\n" + d.headings.slice(0, 16).map(h => "• (" + h.level + ") " + h.text).join("\n"));
+  const L = ["Recreate this web page as ONE self-contained, responsive HTML file: " + (d.title || d.url) + ".",
+             "Fidelity to the ORIGINAL is the goal — use its EXACT colours, fonts, section order and copy below. Implement EVERY colour and font listed; they are the highest-priority detail, not suggestions."];
+  if (d.theme === "dark") L.push("Theme: DARK — near-black background throughout (add class=\"dark\" to <html>; bg-zinc-950 / bg-black on body + sections) with light text. Never a white page.");
+  else if (d.theme === "light") L.push("Theme: light background, dark text.");
+  if (d.description) L.push("Tagline: " + d.description);
+  // PALETTE — the most-prominent colours with role guidance (the single biggest fidelity lever).
+  const pal = (d.palette || []).slice(0, 6);
+  if (pal.length) L.push("EXACT colours — use ALL of these (most prominent first): " + pal.join(", ")
+    + ". Use the dominant ones as page/section backgrounds and the brightest/most-saturated as the accent on buttons + highlights.");
+  // FONTS — the 1-2 real brand fonts (skip generic families), loaded from Google Fonts.
+  const brand = (d.fonts || []).filter(f => !/^(sans-serif|serif|monospace|system-ui|ui-|arial|helvetica|times|georgia|courier|tahoma|verdana)/i.test(f));
+  const useFonts = (brand.length ? brand : (d.fonts || [])).slice(0, 2);
+  if (useFonts.length) L.push("EXACT fonts (load from Google Fonts; use site-wide): " + useFonts.join(" + "));
+  // STRUCTURE + real copy.
+  if (d.sections && d.sections.length) L.push("Sections, top to bottom (" + d.sections.length + " total): " + d.sections.map(s => s.tag + (s.id ? "#" + s.id : "")).slice(0, 14).join(" › "));
+  if (d.headings && d.headings.length) L.push("Real headings/copy to reuse verbatim:\n" + d.headings.slice(0, 12).map(h => "• " + h.text).join("\n"));
   if (d.nav_links && d.nav_links.length) { const nav = d.nav_links.map(l => l.text).filter(Boolean).slice(0, 8); if (nav.length) L.push("Nav items: " + nav.join(" · ")); }
-  // REAL images from the page — feed the actual URLs (<img> tags + CSS backgrounds) so the
-  // clone uses the page's own imagery, not placeholders (the single biggest visual lever).
+  // REAL images.
   const imgs = (d.images || []).map(im => (im && im.src) || im).filter(Boolean);
   const bgs = d.bg_images || [];
   if (imgs.length || bgs.length) {
-    L.push("Use the page's REAL image URLs below (do NOT use picsum) — place them in the matching spots (logo, hero, cards, etc.):");
-    if (bgs.length) L.push("Background images (hero / section backgrounds): " + bgs.slice(0, 5).join("  ·  "));
-    if (imgs.length) L.push("<img> sources, in document order: " + imgs.slice(0, 12).join("  ·  "));
-    L.push("If a real image fails to load, fall back to https://picsum.photos/seed/NAME/W/H.");
+    L.push("Use the page's REAL image URLs (NOT picsum) in the matching spots:");
+    if (bgs.length) L.push("Hero / section background images: " + bgs.slice(0, 4).join("  ·  "));
+    if (imgs.length) L.push("<img> sources in order: " + imgs.slice(0, 8).join("  ·  "));
+    L.push("If a real image 404s, fall back to https://picsum.photos/seed/NAME/W/H.");
   } else if (d.counts && d.counts.images) {
-    L.push("It has ~" + d.counts.images + " images — use https://picsum.photos/seed/NAME/W/H placeholders in those spots.");
+    L.push("~" + d.counts.images + " images — use https://picsum.photos/seed/NAME/W/H placeholders.");
   }
-  const t = d.tokens || {};
-  if (t.font_sizes && t.font_sizes.length) L.push("Type scale (font sizes in use): " + t.font_sizes.join(" · "));
-  if (t.radii && t.radii.length) L.push("Corner radii to match: " + t.radii.join(" · "));
-  if (t.shadows && t.shadows.length) L.push("Box-shadows to match: " + t.shadows.slice(0, 4).join("  |  "));
-  if (t.spacing && t.spacing.length) L.push("Common spacing values (padding/margin): " + t.spacing.join(" · "));
-  const m = d.motion || {};
-  if ((m.keyframes && m.keyframes.length) || (m.animations && m.animations.length)) {
-    L.push("Reproduce these ANIMATIONS with CSS @keyframes — name + duration: "
-      + (m.animations && m.animations.length ? m.animations.join(" · ") : (m.keyframes || []).join(" · ")));
-  }
-  if (m.transitions && m.transitions.length) L.push("Add these hover/transition effects: " + m.transitions.slice(0, 6).join(" · "));
-  if (d.states && d.states.length) {
-    L.push("Interactive hover states to recreate:\n" + d.states.slice(0, 5).map(s =>
-      "• \"" + s.el + "\" on hover -> " + Object.entries(s.hover_changes || {}).map(c => c[0] + ": " + (c[1][0]) + " → " + (c[1][1])).join(", ")).join("\n"));
-  }
-  if (d.framework && d.framework.length) L.push("The original appears built with: " + d.framework.join(", ") + " (match the visual result, not the framework).");
-  L.push("Match the layout, spacing, visual hierarchy AND the motion/hover feel as closely as you can. Make it responsive.");
+  // Light polish note — NOT an exhaustive token/motion dump (that's what overflowed the model).
+  const t = d.tokens || {}, m = d.motion || {}, polish = [];
+  if (t.radii && t.radii.length) polish.push("corner radius ~" + t.radii.slice(0, 2).join("/"));
+  if ((m.animations || []).length || (m.transitions || []).length) polish.push("subtle entrance animations + hover transitions like the original");
+  if (polish.length) L.push("Polish: " + polish.join("; ") + ".");
+  L.push("Match the layout, spacing and visual hierarchy closely. Output ONE complete responsive HTML file.");
   return L.join("\n");
 }
 // human label for a model: "qwen2.5-coder · 14B · Coder"
@@ -2324,8 +2326,11 @@ def _token_set(x):
     return _norm((t.get("radii") or []) + (t.get("shadows") or []) + (t.get("font_sizes") or []))
 
 def fidelity(a, b):
-    pa, pb = _norm(a["palette"]), _norm(b["palette"])
-    fa, fb = _norm(a["fonts"]), _norm(b["fonts"])
+    # Grade against the DOMINANT palette/fonts (what defines the look + what the focused clone
+    # spec feeds the model), not every minor overlay colour — matching the 16th subtle rgba
+    # doesn't move fidelity, and demanding it just punishes a richer (rendered) inspection.
+    pa, pb = _norm((a["palette"] or [])[:8]), _norm(b["palette"])
+    fa, fb = _norm((a["fonts"] or [])[:4]), _norm(b["fonts"])
     ha, hb = _norm(h["text"] for h in a["headings"]), _norm(h["text"] for h in b["headings"])
     ma, mb = _motion_set(a), _motion_set(b)
     ta, tb = _token_set(a), _token_set(b)
@@ -2840,6 +2845,24 @@ AGENTPY
 
 # --agent: the builder page PLUS the approve-to-run tool server (runs commands
 # you OK and writes files, all inside a workspace folder). Opt-in + consented.
+# Render-based site cloning (and reliable screenshots) need Playwright. Install it into a
+# dedicated venv (PEP-668-safe) and run the agent server from that venv's python. Best-effort:
+# if anything fails we fall back to system python3 — stdlib inspect + system-Chrome screenshots
+# still work, just at lower clone fidelity — so the server always starts.
+ensure_agent_python() {
+  AGENT_PYTHON="python3"
+  command -v python3 >/dev/null 2>&1 || return 0
+  local vpy="${AGENT_VENV}/bin/python"
+  [ -x "$vpy" ] || python3 -m venv "$AGENT_VENV" >/dev/null 2>&1 || return 0
+  if ! "$vpy" -c "import playwright.sync_api" >/dev/null 2>&1; then
+    say "  ${DIM}Setting up render-based cloning (Playwright + Chromium, one-time ~150 MB)…${RESET}"
+    "${AGENT_VENV}/bin/pip" install --quiet --upgrade pip playwright >/dev/null 2>&1 \
+      || { warn "Playwright setup skipped — clones use the built-in fallback (lower fidelity)."; return 0; }
+  fi
+  "$vpy" -m playwright install chromium >/dev/null 2>&1 || true
+  if "$vpy" -c "import playwright.sync_api" >/dev/null 2>&1; then AGENT_PYTHON="$vpy"; ok "Render-based cloning ready (Playwright)"; fi
+  return 0
+}
 start_agent() {
   step "Agent mode — builder + approve-to-run tools"
   if ! command -v python3 >/dev/null 2>&1; then
@@ -2853,11 +2876,12 @@ start_agent() {
   if $DRY_RUN; then say "${DIM}[dry-run] write builder page + agent server, launch on 127.0.0.1:${CHAT_PORT}${RESET}"; return 0; fi
   ask "Start the agent server?" n || { say "  Skipped — run the no-tools builder anytime: ./local-llm-setup.sh --chat"; return 0; }
   mkdir -p "$CHAT_DIR"; write_chat_html "$CHAT_DIR/index.html"; write_agent_server "$AGENT_PY"
+  ensure_agent_python   # set up Playwright (render-based cloning) in a venv; AGENT_PYTHON falls back to python3
   if curl -fsS "http://127.0.0.1:${CHAT_PORT}/api/agent/ping" >/dev/null 2>&1; then
     ok "Agent server already running"
   else
     lsof -ti:"${CHAT_PORT}" 2>/dev/null | xargs kill 2>/dev/null || true   # free the port from a plain --chat server
-    nohup python3 "$AGENT_PY" >/dev/null 2>&1 &
+    nohup "$AGENT_PYTHON" "$AGENT_PY" >/dev/null 2>&1 &
     disown 2>/dev/null || true
     for _ in 1 2 3 4 5 6; do curl -fsS "http://127.0.0.1:${CHAT_PORT}/api/agent/ping" >/dev/null 2>&1 && break; sleep 0.5; done
   fi

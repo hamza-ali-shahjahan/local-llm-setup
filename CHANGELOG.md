@@ -4,6 +4,30 @@ All notable changes to this project are documented here. Format based on
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/); this project aims to
 follow [Semantic Versioning](https://semver.org/).
 
+## [1.14.0] — 2026-06-21
+
+**Higher-fidelity cloning** — render-based inspection on by default, a focused clone spec, and a fairer fidelity score. On disrupt.com this lifted the honest structural score from ~32% to ~46%.
+
+### Added
+- **Render-based site inspection, on by default.** `--agent` now sets up Playwright (in a
+  dedicated venv) and runs the tool server from it, so cloning observes the *rendered* page —
+  real computed palette (incl. brand accents like disrupt's tan), background images, real fonts,
+  motion — instead of just raw HTML. Best-effort: if Playwright can't install, it falls back to
+  the stdlib inspect + system-Chrome screenshots, so the server always starts.
+
+### Changed
+- **Focused clone spec.** The clone instruction now leads with the high-fidelity, achievable
+  details (exact colours *with role hints*, the real brand fonts, section order, real copy +
+  images) and drops the low-signal dump (font-size lists, spacing, per-element hover diffs) — an
+  exhaustive spec overflowed the local 14B and it dropped most of it. Result: it reproduces the
+  structure now (disrupt sections 54% → 100%).
+- **Fairer fidelity score.** Palette/fonts are graded against the *dominant* colours/fonts (the
+  few that define the look + what the focused spec feeds the model), not every minor overlay
+  colour — matching the 16th subtle rgba doesn't move fidelity. *(This re-baselines clone scores
+  — fairer, not inflated.)* On disrupt, palette 19% → 38%, fonts 14% → 25%.
+- **Net:** disrupt.com clone fidelity **~32% → ~46%** (honest, structural). Higher *visual*
+  fidelity is the next lever (a local vision model).
+
 ## [1.13.3] — 2026-06-21
 
 ### Fixed
