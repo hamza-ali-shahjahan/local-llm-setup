@@ -29,7 +29,7 @@
 #   ./local-llm-setup.sh --help
 #
 set -euo pipefail
-VERSION="1.13.1"
+VERSION="1.13.2"
 
 # ----------------------------------------------------------------------------
 # Pretty output (degrades gracefully if the terminal has no color)
@@ -1350,16 +1350,27 @@ function loadStore() { try { return JSON.parse(localStorage.getItem(STORE) || "[
 function saveStore(a) { localStorage.setItem(STORE, JSON.stringify(a)); }
 // Persist a SPECIFIC session by id (not just the active one) so a build that
 // finishes while you've switched to another chat saves to ITS own project.
-function persistSession(id, msgs, app) {
+// Snapshot the VISIBLE chat (goal cards, fidelity/coverage scores, plan, verdict, prose —
+// not just the raw model messages) so reopening a chat restores the full story: the
+// thinking, our decisions, the scores. Without this, a reload showed only the last message.
+function captureTranscript() {
+  return [...log.querySelectorAll(".msg")].map(m => ({
+    role: m.classList.contains("user") ? "user" : "assistant",
+    html: (m.querySelector(".body") || {}).innerHTML || ""
+  })).filter(b => b.html);
+}
+function persistSession(id, msgs, app, transcript) {
   if (!msgs.length) return;
   const a = loadStore();
-  const title = (msgs.find(m => m.role === "user") || {}).content || "New chat";
-  const rec = { id, title: title.slice(0, 60), messages: msgs, app, ts: Date.now() };
   const i = a.findIndex(c => c.id === id);
+  const title = (msgs.find(m => m.role === "user") || {}).content || "New chat";
+  // keep the prior transcript when this save isn't for the on-screen session (background build)
+  const tx = transcript || (i >= 0 ? a[i].transcript : null);
+  const rec = { id, title: title.slice(0, 60), messages: msgs, app, transcript: tx, ts: Date.now() };
   if (i >= 0) a[i] = rec; else a.unshift(rec);
   saveStore(a); renderList();
 }
-function persist() { persistSession(currentId, messages, currentApp); }
+function persist() { persistSession(currentId, messages, currentApp, captureTranscript()); }
 function renderList() {
   const a = loadStore();
   chatlist.innerHTML = a.length ? "" : '<div class="empty2">No saved chats yet.</div>';
@@ -1392,8 +1403,19 @@ function openChat(id) {
   const c = loadStore().find(x => x.id === id); if (!c) return;
   currentId = id; messages = c.messages || []; currentApp = injectDesign(c.app || "");
   resetWorkspace();
-  clearMessagesUI(); empty.style.display = messages.length ? "none" : "";
-  for (const m of messages) addMsg(m.role, m.content);
+  clearMessagesUI(); empty.style.display = (messages.length || (c.transcript && c.transcript.length)) ? "none" : "";
+  if (c.transcript && c.transcript.length) {
+    // restore the full visible transcript — goal cards, scores, plan, decisions and all
+    for (const b of c.transcript) {
+      const w = document.createElement("div");
+      w.className = "msg " + (b.role === "user" ? "user" : "bot");
+      w.innerHTML = '<div class="who">' + (b.role === "user" ? "You" : "AI") + '</div><div class="body"></div>';
+      w.querySelector(".body").innerHTML = b.html;
+      log.appendChild(w);
+    }
+  } else {
+    for (const m of messages) addMsg(m.role, m.content);   // older sessions saved before transcripts
+  }
   codeview.textContent = currentApp; dlBtn.disabled = !currentApp; loadPreview(currentApp);
   showTab("preview"); renderList(); stick = true; scrollDown();
 }
@@ -1793,7 +1815,7 @@ async function send() {
   } finally {
     abortCtl = null; setBusy(false); buildSpec = ""; repairHtml = "";
     buildingIds.delete(sid);
-    persistSession(sid, sessionMessages, sessionApp);
+    persistSession(sid, sessionMessages, sessionApp, sid === currentId ? captureTranscript() : null);
     if (sid === currentId) input.focus();
   }
 }
