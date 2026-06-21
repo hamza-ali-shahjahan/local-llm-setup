@@ -4,6 +4,15 @@ All notable changes to this project are documented here. Format based on
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/); this project aims to
 follow [Semantic Versioning](https://semver.org/).
 
+## [1.17.1] — 2026-06-21
+
+### Changed
+- **Capabilities shows the real model name on every entry**, in a clean muted line — not just on
+  the vision row. Each tier now reads e.g. `qwen2.5-coder:14b · deepseek-r1:14b`, and the vision row
+  is simply **Vision model** + `qwen2.5vl:7b`, so the whole list looks uniform.
+- **The model picker refreshes itself after a vision install**, so the vision model (`qwen2.5vl`,
+  badged "Sees images") shows up in the **⚡ Auto** dropdown immediately — no page reload needed.
+
 ## [1.17.0] — 2026-06-21
 
 ### Added / Changed

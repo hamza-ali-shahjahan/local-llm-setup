@@ -338,6 +338,7 @@ function Write-ChatHtml {
   .caprow .cn b { color: #dbe6f2; font-weight: 600; font-size: 13.5px; }
   .caprow .cn div { font-size: 12px; margin-top: 2px; }
   .caprow .cn .sub { color: #6b7787; }
+  .caprow .cn .mdl { font-size: 11px; color: #5b6472; margin-top: 2px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
   .caprow .cn .act { color: #7fd0ff; }
   .caprow .cn .act code, .sysline code { background: #0a0d13; border: 1px solid #2a3140; border-radius: 4px; padding: 1px 5px; font-size: 11.5px; }
   .caprow.locked { opacity: .62; }
@@ -1973,7 +1974,7 @@ const CAP_PILL = {
 function capPill(status, kind){ const p = CAP_PILL[status] || CAP_PILL.coming; return '<span class="pill '+p.cls+'">'+(kind==="cap"?p.cap:p.model)+'</span>'; }
 function capRowHtml(r, kind){ const p = CAP_PILL[r.status] || CAP_PILL.coming;
   return '<div class="caprow '+p.cls+(r.status==="locked"?" locked":"")+'"><span class="st"><i class="dt '+p.cls+'"></i></span>'
-    + '<div class="cn"><b>'+r.name+'</b>'+(r.sub?'<div class="sub">'+r.sub+'</div>':'')+(r.act?'<div class="act">'+r.act+'</div>':'')+(r.unlock?'<div class="sub">→ '+r.unlock+'</div>':'')+(r.action?'<div class="capaction">'+r.action+'</div>':'')+'</div>'
+    + '<div class="cn"><b>'+r.name+'</b>'+(r.models&&r.models.length?'<div class="mdl">'+r.models.join("  ·  ")+'</div>':'')+(r.sub?'<div class="sub">'+r.sub+'</div>':'')+(r.act?'<div class="act">'+r.act+'</div>':'')+(r.unlock?'<div class="sub">→ '+r.unlock+'</div>':'')+(r.action?'<div class="capaction">'+r.action+'</div>':'')+'</div>'
     + '<div class="right">'+(r.pill||capPill(r.status, kind))+'</div></div>'; }
 let _capPoll = null;
 
@@ -2015,6 +2016,7 @@ async function installVision(){
       }
     }
     visionPull = { state:"done", pct:100, label:"Installed" };
+    loadModels();   // refresh the model picker so the new vision model appears without a reload
     renderCaps();
   } catch (e) {
     visionPull = { state:"error", pct:visionPull.pct, label:(e && e.message ? e.message : "Install failed") };
@@ -2038,14 +2040,14 @@ async function renderCaps(){
   const hasTier = n => inst.some(m => (m.role==="coder"||m.role==="reasoner") && Math.round(m.params)===n);
   const hasVision = inst.some(m => /vl|llava|vision|moondream|bakllava|minicpm-?v/i.test(m.name));
   const tiers = [
-    { n:7,  need:7,  gb:"~8 GB",  label:"7B coder + reasoner",  unlock:"genuinely useful local coding" },
-    { n:14, need:14, gb:"~16 GB", label:"14B coder + reasoner", unlock:"the builder + cloning we recommend", star:true },
-    { n:32, need:22, gb:"~24 GB", label:"32B coder + reasoner", unlock:"sharper output with the headroom" },
-    { n:70, need:44, gb:"~48 GB", label:"70B coder + reasoner", unlock:"top tier — needs a big machine" },
+    { n:7,  need:7,  gb:"~8 GB",  label:"7B coder + reasoner",  models:["qwen2.5-coder:7b","deepseek-r1:7b"],   unlock:"genuinely useful local coding" },
+    { n:14, need:14, gb:"~16 GB", label:"14B coder + reasoner", models:["qwen2.5-coder:14b","deepseek-r1:14b"], unlock:"the builder + cloning we recommend", star:true },
+    { n:32, need:22, gb:"~24 GB", label:"32B coder + reasoner", models:["qwen2.5-coder:32b","deepseek-r1:32b"], unlock:"sharper output with the headroom" },
+    { n:70, need:44, gb:"~48 GB", label:"70B coder + reasoner", models:["qwen2.5-coder:32b","deepseek-r1:70b"], unlock:"top tier — needs a big machine" },
   ];
   const modelRows = tiers.map(t => {
     const installed = hasTier(t.n), can = detected ? eff >= t.need : true;   // undetected -> never a false lock
-    return { status: installed?"active":(detected ? (can?"available":"locked") : "available"), name: t.label+(t.star?" ⭐":""),
+    return { status: installed?"active":(detected ? (can?"available":"locked") : "available"), name: t.label+(t.star?" ⭐":""), models: t.models,
       sub: detected ? (can ? "fits your "+eff+" GB" : "needs "+t.gb+" of memory — more than your "+eff+" GB, so it won't run here") : "needs "+t.gb+" of memory",
       act: (!installed && can) ? "the installer auto-picks the right tier for your machine" : "", unlock: t.unlock };
   });
@@ -2068,7 +2070,7 @@ async function renderCaps(){
     visStatus = "available"; visPill = '<span class="pill avail">Not installed</span>';
     visAction = '<div class="pullbtns"><button class="capbtn" data-act="install-vision">⬇ Install vision model</button><button class="caplink" data-act="copy-vision">or copy command</button></div>';
   }
-  modelRows.push({ status: visStatus, name:"Vision model (qwen2.5vl:7B)",
+  modelRows.push({ status: visStatus, name:"Vision model", models:["qwen2.5vl:7b"],
     sub:"needs ~6 GB (~24 GB to run alongside the coder)", unlock:"lets the builder SEE the page → visual clone fidelity",
     pill: visPill, action: visAction });
   const a = (typeof agentReady !== "undefined") && agentReady;
