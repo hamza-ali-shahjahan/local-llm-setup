@@ -2164,6 +2164,9 @@ async function renderCaps(){
     { n:32, need:22, gb:"~24 GB", dl:"~40 GB", label:"32B coder + reasoner", models:["qwen2.5-coder:32b","deepseek-r1:32b"], unlock:"sharper output with the headroom" },
     { n:70, need:44, gb:"~48 GB", dl:"~63 GB", label:"70B coder + reasoner", models:["qwen2.5-coder:32b","deepseek-r1:70b"], unlock:"top tier — needs a big machine" },
   ];
+  const installedNs = tiers.filter(t => hasTier(t.n)).map(t => t.n);
+  const bestInstalledN = installedNs.length ? Math.max.apply(null, installedNs) : 0;   // highest coder tier you already run
+  const bestStar = tiers.some(t => t.star && t.n === bestInstalledN);
   const modelRows = tiers.map(t => {
     const installed = hasTier(t.n), can = detected ? eff >= t.need : true;   // undetected -> never a false lock
     const status = installed?"active":(detected ? (can?"available":"locked") : "available");
@@ -2179,8 +2182,11 @@ async function renderCaps(){
         row.action = '<div class="pullerr" id="tierlabel">'+escCap(tierPull.label)+' — or re-run the installer to add this tier.</div><div class="pullbtns"><button class="capbtn" data-act="install-tier" data-tier="'+t.n+'">↻ Retry</button></div>';
       } else if (tierPull.state === "pulling") {
         row.act = "another model is installing — one at a time";
+      } else if (bestInstalledN && t.n < bestInstalledN) {                     // a better tier is already installed -> don't push the smaller one
+        row.pill = '<span class="pill locked">Optional</span>';
+        row.action = '<div style="font-size:12px;color:var(--faint);line-height:1.5">You already run the '+bestInstalledN+'B'+(bestStar?' (recommended)':'')+' — this smaller tier isn\'t needed (it\'d just be lighter &amp; faster). <button class="caplink" data-act="install-tier" data-tier="'+t.n+'">Install anyway</button></div>';
       } else {
-        row.action = '<div class="pullbtns"><button class="capbtn" data-act="install-tier" data-tier="'+t.n+'">⬇ Install '+t.n+'B coder + reasoner</button><span style="font-size:11.5px;color:#5b6472;align-self:center">'+t.dl+' download</span></div>';
+        row.action = '<div class="pullbtns"><button class="capbtn" data-act="install-tier" data-tier="'+t.n+'">⬇ Install '+t.n+'B coder + reasoner</button><span style="font-size:11.5px;color:var(--faint);align-self:center">'+t.dl+' download</span></div>';
       }
     }
     return row;
