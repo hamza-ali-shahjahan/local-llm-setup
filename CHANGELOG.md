@@ -4,6 +4,22 @@ All notable changes to this project are documented here. Format based on
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/); this project aims to
 follow [Semantic Versioning](https://semver.org/).
 
+## [1.17.0] — 2026-06-21
+
+### Added / Changed
+- **Sharper clones via headroom-style token compression + forcing.** The render-based inspect used
+  to hand the coder a bloated dump of design tokens (every font-size, duplicate colours, raw
+  spacing) — which a local 14B mostly drops on the floor. Now the digest is **compressed at the
+  source** (dedup, cap, round px like `18.52px → 18px`, drop low-signal spacing), so every
+  tool-output and clone spec built from it is lean; and the clone spec **forces the few high-signal
+  tokens** — exact corner radii, the key box-shadow, and the type scale — as *must-implement*
+  values. Leaner input, used instead of ignored. (Directly targets the fonts/tokens gap.)
+- **16k context for clones** (up from 8k) — the full render-based spec *and* a complete HTML file
+  now both fit, so the coder stops truncating on complex pages (the cause of thin, low-scoring
+  first passes).
+- **More vision-critique rounds** — 3 by default, 4 in Goal mode (up from 2) — so the visual pass
+  keeps closing gaps.
+
 ## [1.16.2] — 2026-06-21
 
 ### Fixed
