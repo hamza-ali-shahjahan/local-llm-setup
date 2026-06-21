@@ -4,6 +4,23 @@ All notable changes to this project are documented here. Format based on
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/); this project aims to
 follow [Semantic Versioning](https://semver.org/).
 
+## [1.19.0] — 2026-06-22
+
+### Added
+- **A polished light mode — with a header toggle.** The builder chrome now ships a refined **dark**
+  theme *and* a new **light** theme; flip between them with the ☾/☀ button in the top-right. Your
+  choice is **remembered** (`localStorage`) and applied *before first paint*, so there's no flash on
+  reload.
+
+### Changed
+- **The whole chrome is now a CSS design-token system.** The ~50 hardcoded colours scattered through
+  the UI became a clean set of semantic CSS variables (`--bg`, `--surface`, `--text`, `--accent`,
+  `--border`, semantic `--ok/--warn/--danger`, shadows…), with a full light-theme override. The
+  **refined blue accent (`#2b6cff`)** is kept across both themes; near-duplicate greys were
+  consolidated so the palette reads more consistently even in dark. Subtle interactive polish:
+  smoother button transitions and an accent-tinted border on hover.
+- Pure frontend change — no backend, no new dependencies, still a single offline HTML file.
+
 ## [1.18.0] — 2026-06-21
 
 ### Added
