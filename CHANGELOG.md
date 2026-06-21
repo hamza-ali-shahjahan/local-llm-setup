@@ -4,6 +4,17 @@ All notable changes to this project are documented here. Format based on
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/); this project aims to
 follow [Semantic Versioning](https://semver.org/).
 
+## [1.16.2] — 2026-06-21
+
+### Fixed
+- **Agent mode no longer dumps code into the chat for web-app work.** With the Agent toggle on, a
+  follow-up to a build or clone (e.g. *"that missed things — improve it"*) was routed into the raw
+  tool loop, which emits `<fetch>`/`<extract>`/`<write>` and streams raw HTML into the chat instead
+  of rendering it in the preview. The agent loop is now reserved for genuine tool tasks (shell,
+  multi-file, backend, install); every web-app **build, edit, clone, or question** keeps its normal
+  path — preview or answer — even with Agent on. (Extends the v1.12.2 clone carve-out to follow-ups
+  and edits, so a power toggle never overrides task-correct routing.)
+
 ## [1.16.1] — 2026-06-21
 
 ### Fixed

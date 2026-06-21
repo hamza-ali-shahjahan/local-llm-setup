@@ -778,6 +778,10 @@ function indexModels(names) {
 // Key rule: once an app is on screen, treat requests as EDITS to it (the Lovable
 // model) — even ones containing build-ish words like "make" or "design" — unless
 // the user clearly asks to start fresh. A new app belongs in a new chat.
+// A genuine agent-tool task (shell / multi-file / backend / install) — NOT a single web app to
+// build, edit, or clone. ONLY these route to the raw tool loop; web apps always use the
+// build/clone/edit path so they render in the preview instead of dumping code into the chat.
+const AGENT_TASK_RE = /\b(multi[- ]?file|several files|back[- ]?end|database|\bAPI\b|server|full[- ]?stack|npm\b|pip\b|install|scaffold|run (?:the|a|my)|execute|shell|command|\bCLI\b)\b/i;
 function route(text) {
   const t = text.toLowerCase();
   const reasonRe = /\b(explain|why|how (does|do|to)|what (is|are|s)|compare|difference|pros and cons|analy|reason|architecture|should i|recommend|best way)\b/;
@@ -1238,7 +1242,7 @@ function modeSuggestion(text, auto, agentOn, goalOn) {
   if (auto.cloneUrl && !goalOn) return {
     mode: "goal", title: "🎯 This looks like a site clone",
     body: "<b>Goal mode</b> sets a fidelity target and iterates the clone toward it, pausing for your approval first. (It works for <b>any build</b>, not just clones — and doesn't need the Agent toggle.) Turn it on?" };
-  const agentTask = /\b(multi[- ]?file|several files|back[- ]?end|database|\bAPI\b|server|full[- ]?stack|npm\b|pip\b|install|scaffold|run (?:the|a|my)|execute|shell|command|\bCLI\b)\b/i.test(text);
+  const agentTask = AGENT_TASK_RE.test(text);
   if (agentTask && !auto.cloneUrl && !agentOn) return {
     mode: "agent", title: "🤖 This looks like a multi-file / tooling task",
     body: "<b>Agent mode</b> gives the model real tools — run terminal commands and write files (it asks your approval before each). Turn it on for this?" };
@@ -1642,10 +1646,15 @@ async function send() {
       }
     }
   }
-  let r = auto.cloneUrl
-    ? auto                                                        // a clone ALWAYS uses the clone path (preview + score), never the raw agent loop
-    : (autoMode && !agentRun) ? auto
-    : { kind: agentRun ? "agent" : (currentApp ? "edit" : "build"), model: currentModel || bestCoder, plan: false };
+  // Agent mode runs the raw tool loop ONLY for a genuine tool task (shell/multi-file/backend).
+  // A web-app build, edit, clone, or a question keeps its normal path (preview / answer) even with
+  // Agent on, so it never dumps code into the chat. v1.12.2 carved out clones; this carves out the
+  // rest — only a real agent task reaches the loop. (A clone follow-up is an edit → still previews.)
+  const agentTaskNow = agentRun && AGENT_TASK_RE.test(text);
+  let r = auto.cloneUrl ? auto                                    // a clone ALWAYS uses the clone path (preview + score)
+    : agentTaskNow ? { kind: "agent", model: currentModel || bestCoder, plan: false }
+    : autoMode ? auto                                             // let the router pick: reason / edit / build / clone
+    : { kind: currentApp ? "edit" : "build", model: currentModel || bestCoder, plan: false };
   try {
     // ---- Goal Mode: forge a measurable goal, get the user's agreement, THEN pursue + log ----
     if (goalRun && (r.kind === "build" || r.cloneUrl)) {
@@ -1663,7 +1672,7 @@ async function send() {
         else goalSpec = goalSpecText(g);
       }
     }
-    if (agentRun && !r.cloneUrl && !goalActive) {
+    if (r.kind === "agent" && !goalActive) {
       // ---- agent mode: multi-step approve-to-run tool loop. Clones + Goal mode are
       // deliberately NOT routed here — they use the build/clone path (live preview +
       // fidelity score); the raw tool loop is for shell / multi-file / non-web tasks. ----
