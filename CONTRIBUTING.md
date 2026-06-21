@@ -25,6 +25,12 @@ A change to one (a new tier, a new flag, a reworded prompt) should land in the o
 2. **Nothing destructive, everything consented.** Any install or download must be gated behind a prompt (or `--yes` / `-Yes`). `--dry-run` / `-DryRun` must remain a true no-op.
 3. **Bare command lines in docs.** Never put a trailing `# comment` on a `curl … | bash` line in the README or anywhere a user copy-pastes — it can mis-parse on paste and kill the script. Put explanations on their own line, above the command.
 
+## Working in parallel
+
+If more than one session (human or AI) works this repo at once, give each its own git
+worktree so they can't clash: `tools/new-session.sh <name>`. Branch-first always — never
+commit straight to `main`; integrate through reviewed PRs. See [docs/PARALLEL-SESSIONS.md](docs/PARALLEL-SESSIONS.md).
+
 ## Before you open a PR
 
 Bash:
