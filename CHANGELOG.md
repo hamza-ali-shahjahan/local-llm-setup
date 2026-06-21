@@ -4,6 +4,15 @@ All notable changes to this project are documented here. Format based on
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/); this project aims to
 follow [Semantic Versioning](https://semver.org/).
 
+## [1.13.2] — 2026-06-21
+
+### Fixed
+- **Reopening a chat now restores the whole story, not just the last message.** The goal card,
+  the suggestion, the fidelity/coverage scores, the plan, the "refined the clone" steps and the
+  verdict are rendered cards — they were never saved, so a reload showed only the raw model
+  messages. The full visible transcript is now persisted per chat and restored on reopen, so the
+  thinking, the decisions, and the scores all come back.
+
 ## [1.13.1] — 2026-06-21
 
 ### Changed
