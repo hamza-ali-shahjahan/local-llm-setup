@@ -4,6 +4,14 @@ All notable changes to this project are documented here. Format based on
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/); this project aims to
 follow [Semantic Versioning](https://semver.org/).
 
+## [1.13.1] — 2026-06-21
+
+### Changed
+- **Clearer Goal messaging.** The Goal info tooltip + the clone suggestion no longer read as
+  clone-only (Goal now works for any build), and the "needs --agent" note is disambiguated:
+  Goal runs on the built-in **agent server** (already on whenever the toggle is enabled) and
+  does **not** require the separate **Agent toggle**.
+
 ## [1.13.0] — 2026-06-21
 
 **Goal mode grows beyond cloning** — it's now a general measurable-quality engine, not a clone tool.
