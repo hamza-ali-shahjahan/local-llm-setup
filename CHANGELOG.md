@@ -4,6 +4,21 @@ All notable changes to this project are documented here. Format based on
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/); this project aims to
 follow [Semantic Versioning](https://semver.org/).
 
+## [1.15.0] — 2026-06-21
+
+**Capabilities modal** — a 🧩 Capabilities button that shows, for *your* machine, what you can run, what's installed vs available to add, and what's coming.
+
+### Added
+- **Hardware-aware Capabilities modal.** A new **🧩 Capabilities** button (top-right) opens a
+  modal that detects your machine — RAM, GPU/VRAM, OS → model tier, via a new
+  `/api/agent/system` endpoint (stdlib-only, best-effort, graceful) — and shows an honest matrix:
+  each model tier (7B / 14B / 32B / 70B) and the vision model marked **✅ active** (installed),
+  **🟢 available** (your machine can run it, not installed — with the exact `ollama pull` to add
+  it), or **🔒 needs more memory**; the live capabilities (cloning, fidelity score, Goal mode,
+  agent tools) as active; and the roadmap (vision-critique loop, multi-file, web search,
+  backend, deploy) as **🛠 coming soon**. So a first-timer sees exactly what they get on their
+  specs — and what they're one step away from unlocking.
+
 ## [1.14.0] — 2026-06-21
 
 **Higher-fidelity cloning** — render-based inspection on by default, a focused clone spec, and a fairer fidelity score. On disrupt.com this lifted the honest structural score from ~32% to ~46%.

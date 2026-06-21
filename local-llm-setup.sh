@@ -29,7 +29,7 @@
 #   ./local-llm-setup.sh --help
 #
 set -euo pipefail
-VERSION="1.14.0"
+VERSION="1.15.0"
 
 # ----------------------------------------------------------------------------
 # Pretty output (degrades gracefully if the terminal has no color)
@@ -355,6 +355,26 @@ write_chat_html() {
   header { flex: none; display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 12px; padding: 10px 16px; border-bottom: 1px solid #1e2430; background: #11151d; }
   .hgroup { display: flex; align-items: center; gap: 12px; min-width: 0; }
   .hright { justify-self: end; }
+  /* Capabilities modal */
+  .modal-bg { position: fixed; inset: 0; z-index: 100; background: rgba(0,0,0,.62); display: flex; align-items: center; justify-content: center; padding: 24px; }
+  .modal-bg[hidden] { display: none; }
+  .modal { background: #11151d; border: 1px solid #2a3140; border-radius: 14px; max-width: 720px; width: 100%; max-height: 86vh; display: flex; flex-direction: column; box-shadow: 0 24px 64px rgba(0,0,0,.6); }
+  .modal h3 { margin: 0; padding: 15px 20px; border-bottom: 1px solid #1e2430; font-size: 15px; color: #cfe3ff; display: flex; align-items: center; gap: 9px; flex: none; }
+  .modal .mclose { margin-left: auto; background: #1a2230; border: 1px solid #2a3140; color: #c7d0dd; border-radius: 7px; width: 28px; height: 28px; cursor: pointer; font-size: 16px; line-height: 1; }
+  .modal .mbody { padding: 14px 20px 20px; overflow-y: auto; }
+  .sysline { background: #0f131b; border: 1px solid #20283a; border-radius: 10px; padding: 11px 13px; font-size: 13px; color: #b6c0cf; line-height: 1.5; }
+  .sysline b { color: #aef0c4; font-weight: 600; }
+  .caph { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: #5b6472; margin: 18px 0 4px; }
+  .caprow { display: flex; align-items: flex-start; gap: 11px; padding: 9px 0; border-top: 1px solid #161c28; }
+  .caprow .st { flex: none; width: 18px; text-align: center; font-size: 14px; }
+  .caprow .cn { flex: 1; min-width: 0; }
+  .caprow .cn b { color: #dbe6f2; font-weight: 600; font-size: 13.5px; }
+  .caprow .cn div { font-size: 12px; margin-top: 2px; }
+  .caprow .cn .sub { color: #6b7787; }
+  .caprow .cn .act { color: #7fd0ff; }
+  .caprow .cn .act code, .sysline code { background: #0a0d13; border: 1px solid #2a3140; border-radius: 4px; padding: 1px 5px; font-size: 11.5px; }
+  .caprow.locked { opacity: .5; }
+  .caplegend { font-size: 11.5px; color: #5b6472; margin-top: 18px; padding-top: 12px; border-top: 1px solid #1e2430; line-height: 1.7; }
   header h1 { font-size: 14px; margin: 0; font-weight: 600; color: #cfe3ff; display: flex; align-items: center; gap: 8px; white-space: nowrap; }
   header .dot { width: 8px; height: 8px; border-radius: 50%; background: #2ecc71; box-shadow: 0 0 8px #2ecc71; flex: none; }
   .grow { flex: 1; }
@@ -571,6 +591,7 @@ write_chat_html() {
       </span>
     </div>
     <div class="hgroup hright">
+      <button class="tbtn" id="capBtn" title="What your machine can run + what you can add">&#129513; Capabilities</button>
       <button class="tbtn" id="dlBtn" title="Download the current app" disabled>Download</button>
     </div>
   </header>
@@ -619,6 +640,13 @@ write_chat_html() {
 
   <!-- Design system for generated apps. Lives in an INERT <template> (never a JS
        string), so an embedded </script> can never close the page's own script. -->
+  <div class="modal-bg" id="capModal" hidden>
+    <div class="modal">
+      <h3>&#129513; Capabilities <button class="mclose" id="capClose" title="Close">&times;</button></h3>
+      <div class="mbody" id="capBody"></div>
+    </div>
+  </div>
+
   <template id="designHead"><style>
 :root{--background:0 0% 100%;--foreground:222 47% 11%;--card:0 0% 100%;--card-foreground:222 47% 11%;--popover:0 0% 100%;--popover-foreground:222 47% 11%;--primary:222 47% 11%;--primary-foreground:210 40% 98%;--secondary:210 40% 96%;--secondary-foreground:222 47% 11%;--muted:210 40% 96%;--muted-foreground:215 16% 47%;--accent:210 40% 96%;--accent-foreground:222 47% 11%;--destructive:0 84% 60%;--destructive-foreground:210 40% 98%;--border:214 32% 91%;--input:214 32% 91%;--ring:222 47% 11%;--radius:0.6rem;}
 .dark{--background:222 47% 6%;--foreground:210 40% 98%;--card:222 47% 9%;--card-foreground:210 40% 98%;--popover:222 47% 9%;--popover-foreground:210 40% 98%;--primary:210 40% 98%;--primary-foreground:222 47% 11%;--secondary:217 33% 17%;--secondary-foreground:210 40% 98%;--muted:217 33% 17%;--muted-foreground:215 20% 65%;--accent:217 33% 17%;--accent-foreground:210 40% 98%;--destructive:0 63% 31%;--destructive-foreground:210 40% 98%;--border:217 33% 20%;--input:217 33% 20%;--ring:212 27% 84%;}
@@ -712,6 +740,7 @@ const preview = el("preview"), codeview = el("codeview"), termview = el("termvie
 const tabPreview = el("tabPreview"), tabCode = el("tabCode"), tabTerm = el("tabTerm"), dlBtn = el("dlBtn");
 const sidebar = el("sidebar"), chatlist = el("chatlist"), agentChk = el("agentChk"), agentLabel = el("agentLabel");
 const goalChk = el("goalChk"), goalLabel = el("goalLabel");
+const capBtn = el("capBtn"), capModal = el("capModal"), capClose = el("capClose"), capBody = el("capBody");
 
 let messages = [], busy = false, currentModel = "", currentApp = "", stick = true, buildingApp = false;
 let currentId = newId(), agentReady = false;
@@ -1826,6 +1855,59 @@ input.addEventListener("keydown", e => { if (e.key === "Enter" && !e.shiftKey) {
 input.addEventListener("input", () => { input.style.height = "auto"; input.style.height = Math.min(input.scrollHeight, 160) + "px"; });
 document.querySelectorAll(".empty .ex span").forEach(s => s.addEventListener("click", () => { input.value = s.dataset.ex; send(); }));
 
+/* ---------- Capabilities modal: hardware-aware "what can I run + what am I missing" ---------- */
+function capBadge(s){ return s==="active"?"✅":s==="available"?"🟢":s==="locked"?"🔒":"🛠"; }
+function capRowHtml(r){ return '<div class="caprow'+(r.status==="locked"?" locked":"")+'"><span class="st">'+capBadge(r.status)+'</span><div class="cn"><b>'+r.name+'</b>'+(r.sub?'<div class="sub">'+r.sub+'</div>':'')+(r.act?'<div class="act">'+r.act+'</div>':'')+(r.unlock?'<div class="sub">→ '+r.unlock+'</div>':'')+'</div></div>'; }
+async function openCapabilities(){
+  capModal.hidden = false;
+  capBody.innerHTML = '<div class="sysline">Detecting your system…</div>';
+  let sys = {};
+  try { sys = await (await fetch(AGENT_URL + "/api/agent/system")).json(); } catch(e){}
+  const eff = sys.effective_gb || 0;
+  const hasTier = n => models.some(m => (m.role==="coder"||m.role==="reasoner") && Math.round(m.params)===n);
+  const hasVision = models.some(m => /vl|llava|vision|moondream|bakllava|minicpm-?v/i.test(m.name));
+  const tiers = [
+    { n:7,  need:7,  gb:"~8 GB",  label:"7B coder + reasoner",  unlock:"genuinely useful local coding" },
+    { n:14, need:14, gb:"~16 GB", label:"14B coder + reasoner", unlock:"the builder + cloning we recommend", star:true },
+    { n:32, need:22, gb:"~24 GB", label:"32B coder + reasoner", unlock:"sharper output with the headroom" },
+    { n:70, need:44, gb:"~48 GB", label:"70B coder + reasoner", unlock:"top tier — needs a big machine" },
+  ];
+  const modelRows = tiers.map(t => {
+    const can = eff >= t.need, inst = hasTier(t.n);
+    return { status: inst?"active":(can?"available":"locked"), name: t.label+(t.star?" ⭐":""),
+      sub: "needs "+t.gb+(can?"":" — your "+eff+" GB can't hold it"),
+      act: (can&&!inst) ? "the installer auto-picks this tier for your machine" : "", unlock: t.unlock };
+  });
+  const visCan = eff >= 7;
+  modelRows.push({ status: hasVision?"active":(visCan?"available":"locked"), name:"Vision model (qwen2.5vl:7B)",
+    sub:"needs ~6 GB (~24 GB to run alongside the coder)", unlock:"lets the builder SEE the page → visual clone fidelity",
+    act:(visCan&&!hasVision)?'available now — <code>ollama pull qwen2.5vl:7b</code> to unlock it':'' });
+  const a = (typeof agentReady !== "undefined") && agentReady;
+  const caps = [
+    { status:"active", name:"Build single-page apps", sub:"live preview, any model" },
+    { status:a?"active":"available", name:"Website cloning", sub: a?(sys.render?"render-based (Playwright) — full fidelity":"basic path — re-run --agent for render fidelity"):"needs the --agent server" },
+    { status:a?"active":"available", name:"Clone-fidelity score + iterate-to-target", sub:a?"active":"needs --agent" },
+    { status:a?"active":"available", name:"🎯 Goal mode (forge → agree → pursue → learn)", sub:a?"active":"needs --agent" },
+    { status:a?"active":"available", name:"Agent tools (run · write · fetch · gitsync)", sub:a?"active":"needs --agent" },
+    { status:"coming", name:"Vision-critique clone loop", sub:"in progress — will use the vision model above" },
+    { status:"coming", name:"Multi-file projects", sub:"on the roadmap" },
+    { status:"coming", name:"Web search · image generation", sub:"on the roadmap" },
+    { status:"coming", name:"Backend / database · one-click deploy", sub:"on the roadmap" },
+  ];
+  const sysLine = sys.os
+    ? "🖥️ " + (sys.os==="Darwin"?"macOS":sys.os) + " · " + (sys.gpu||"CPU only") + " · " + (sys.ram_gb||"?") + " GB RAM"
+      + (sys.vram_gb && sys.gpu && !/unified/i.test(sys.gpu) ? " · " + sys.vram_gb + " GB VRAM" : "")
+      + " → up to the <b>" + (sys.tier||"?").toUpperCase() + "</b> tier"
+    : "Couldn't detect your system — start the <code>--agent</code> server to see your full capabilities.";
+  capBody.innerHTML = '<div class="sysline">'+sysLine+'</div>'
+    + '<div class="caph">Models — what your machine can run</div>' + modelRows.map(capRowHtml).join("")
+    + '<div class="caph">Capabilities</div>' + caps.map(capRowHtml).join("")
+    + '<div class="caplegend">✅ active &nbsp;·&nbsp; 🟢 available — your machine can run it, just not installed &nbsp;·&nbsp; 🔒 needs more memory &nbsp;·&nbsp; 🛠 coming soon</div>';
+}
+capBtn.addEventListener("click", openCapabilities);
+capClose.addEventListener("click", () => capModal.hidden = true);
+capModal.addEventListener("click", e => { if (e.target === capModal) capModal.hidden = true; });
+document.addEventListener("keydown", e => { if (e.key === "Escape") capModal.hidden = true; });
 loadModels(); detectAgent(); renderList(); input.focus();
 </script>
 </body>
@@ -1886,7 +1968,7 @@ write_agent_server() {
 # An approved command itself is not sandboxed (an approved `rm -rf ~` still runs) —
 # UI approval is the guardrail for mutations. Harden before any default ship.
 
-import json, os, re, socket, ipaddress, subprocess, base64, shutil, tempfile, struct, glob, sys, time, urllib.request
+import json, os, re, socket, ipaddress, subprocess, base64, shutil, tempfile, struct, glob, sys, time, platform, urllib.request
 from collections import Counter
 from html.parser import HTMLParser
 from urllib.parse import urljoin, urlsplit
@@ -2706,6 +2788,57 @@ def read_goal_runs(limit=100):
     return out[-limit:]
 
 
+# ---------- system detection: powers the "Capabilities" modal ----------
+# Best-effort, stdlib-only, graceful: RAM via sysconf (mac/linux) or GlobalMemoryStatusEx
+# (windows); GPU/VRAM via Apple-Silicon detection or nvidia-smi. The effective memory (VRAM
+# if a discrete GPU, else RAM) picks the model tier — the same logic the installer uses — so
+# the UI can honestly say what this machine can and can't run.
+def detect_system():
+    info = {"os": platform.system() or "?", "arch": platform.machine() or "?"}
+    ram = 0
+    try:
+        if hasattr(os, "sysconf") and "SC_PHYS_PAGES" in os.sysconf_names and "SC_PAGE_SIZE" in os.sysconf_names:
+            ram = os.sysconf("SC_PHYS_PAGES") * os.sysconf("SC_PAGE_SIZE")
+    except Exception:
+        pass
+    if not ram and info["os"] == "Windows":
+        try:
+            import ctypes
+            class _MS(ctypes.Structure):
+                _fields_ = [("dwLength", ctypes.c_ulong), ("dwMemoryLoad", ctypes.c_ulong),
+                            ("ullTotalPhys", ctypes.c_ulonglong), ("ullAvailPhys", ctypes.c_ulonglong),
+                            ("ullTotalPageFile", ctypes.c_ulonglong), ("ullAvailPageFile", ctypes.c_ulonglong),
+                            ("ullTotalVirtual", ctypes.c_ulonglong), ("ullAvailVirtual", ctypes.c_ulonglong),
+                            ("ullAvailExtendedVirtual", ctypes.c_ulonglong)]
+            m = _MS(); m.dwLength = ctypes.sizeof(_MS)
+            ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(m))
+            ram = int(m.ullTotalPhys)
+        except Exception:
+            pass
+    info["ram_gb"] = round(ram / (1024 ** 3), 1) if ram else None
+    gpu, vram = None, None
+    if info["os"] == "Darwin" and info["arch"] in ("arm64", "aarch64"):
+        gpu, vram = "Apple Silicon GPU (unified memory)", info["ram_gb"]
+    else:
+        try:
+            r = subprocess.run(["nvidia-smi", "--query-gpu=name,memory.total", "--format=csv,noheader,nounits"],
+                               capture_output=True, text=True, timeout=5)
+            if r.returncode == 0 and r.stdout.strip():
+                row = r.stdout.strip().split("\n")[0].split(",")
+                gpu = row[0].strip()
+                if len(row) > 1:
+                    vram = round(int(row[1].strip()) / 1024, 1)
+        except Exception:
+            pass
+    info["gpu"], info["vram_gb"] = gpu, vram
+    eff = vram or info["ram_gb"] or 0
+    info["effective_gb"] = eff
+    info["tier"] = ("70b" if eff >= 44 else "32b" if eff >= 22 else "14b" if eff >= 14
+                    else "7b" if eff >= 7 else "tiny")
+    info["render"] = _have_playwright()
+    return info
+
+
 class H(BaseHTTPRequestHandler):
     def _cors(self):
         o = self.headers.get("Origin")
@@ -2734,6 +2867,8 @@ class H(BaseHTTPRequestHandler):
                                                            else ("chrome" if find_browser() else None))})
         if self.path.startswith("/api/agent/goalruns"):
             return self._json(200, {"ok": True, "runs": read_goal_runs(), "path": GOAL_LOG})
+        if self.path.startswith("/api/agent/system"):
+            return self._json(200, {"ok": True, **detect_system()})
         name = "index.html" if self.path in ("/", "") else os.path.basename(self.path.split("?")[0])
         fp = os.path.join(CHAT_DIR, name)
         if os.path.isfile(fp):
