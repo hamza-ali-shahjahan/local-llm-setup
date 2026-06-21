@@ -4,6 +4,17 @@ All notable changes to this project are documented here. Format based on
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/); this project aims to
 follow [Semantic Versioning](https://semver.org/).
 
+## [1.18.0] — 2026-06-21
+
+### Added
+- **Install models straight from Capabilities — it's now a real install hub.** Every coder +
+  reasoner tier your machine can run gets a one-click **⬇ Install** button (with its download size),
+  alongside the existing one-click vision install. It does the *proper* job — pulls each base model,
+  then creates its context-tuned alias (`num_ctx 8192`) exactly like the installer (e.g.
+  `qwen2.5-coder:32b` → `qwen2.5-coder-32b-8k`) — so the models match a fresh setup and the builder
+  picks them up immediately. Unrunnable tiers stay locked ("Needs more RAM"); installed ones show ✓.
+  The auto-install-at-setup flow is unchanged — this just lets you add or upgrade a tier from the UI.
+
 ## [1.17.1] — 2026-06-21
 
 ### Changed

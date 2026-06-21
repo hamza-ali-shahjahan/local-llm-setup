@@ -2029,6 +2029,51 @@ function copyVisionCmd(btn){
   if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(cmd).then(ok, ok);
   else { try { const ta = document.createElement("textarea"); ta.value = cmd; document.body.appendChild(ta); ta.select(); document.execCommand("copy"); ta.remove(); ok(); } catch (e) {} }
 }
+// ---- Install a full coder+reasoner TIER from Capabilities, mirroring the installer exactly:
+// pull each base model, then create its context-tuned alias (num_ctx 8192) so the builder picks
+// it up identically to a fresh setup. Browser-orchestrated via Ollama's API, like the vision one.
+const TIER_CTX = 8192;
+function tierModels(n){ return n === 70 ? ["qwen2.5-coder:32b","deepseek-r1:70b"] : ["qwen2.5-coder:"+n+"b","deepseek-r1:"+n+"b"]; }
+function ctxAlias(m){ return m.replace(":","-") + "-" + (TIER_CTX/1024) + "k"; }   // qwen2.5-coder:14b -> qwen2.5-coder-14b-8k
+let tierPull = { tier:null, state:"idle", pct:0, label:"" };   // one tier installs at a time
+function patchTierProgress(){ const f = el("tierfill"); if (f) f.style.width = tierPull.pct+"%"; const l = el("tierlabel"); if (l) l.textContent = tierPull.label; }
+async function installTier(n){
+  if (tierPull.state === "pulling") return;
+  const models = tierModels(n);
+  tierPull = { tier:n, state:"pulling", pct:0, label:"Starting download…" };
+  renderCaps();
+  try {
+    for (let i = 0; i < models.length; i++) {
+      const m = models[i];
+      const res = await fetch(API + "/api/pull", { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ name:m, stream:true }) });
+      if (!res.ok || !res.body) throw new Error("Ollama returned HTTP " + res.status);
+      const reader = res.body.getReader(), dec = new TextDecoder(); let buf = "";
+      while (true) {
+        const { value, done } = await reader.read(); if (done) break;
+        buf += dec.decode(value, { stream:true });
+        let nl; while ((nl = buf.indexOf("\n")) >= 0) {
+          const line = buf.slice(0, nl).trim(); buf = buf.slice(nl+1);
+          if (!line) continue;
+          let o; try { o = JSON.parse(line); } catch(e){ continue; }
+          if (o.error) throw new Error(o.error);
+          if (typeof o.total === "number" && typeof o.completed === "number" && o.total > 0) {
+            tierPull.pct = Math.min(100, Math.round(o.completed/o.total*100));
+            tierPull.label = "Downloading " + m + " (" + (i+1) + "/" + models.length + ") · " + tierPull.pct + "% · " + fmtGB(o.completed) + " / " + fmtGB(o.total);
+          } else if (o.status) { tierPull.label = m + " · " + o.status + "…"; }
+          patchTierProgress();
+        }
+      }
+      tierPull.label = "Tuning the context window for " + m + "…"; patchTierProgress();
+      const cr = await fetch(API + "/api/create", { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ model: ctxAlias(m), from: m, parameters: { num_ctx: TIER_CTX }, stream:false }) });
+      if (!cr.ok) throw new Error("couldn't context-tune " + m + " (HTTP " + cr.status + ")");
+    }
+    tierPull = { tier:n, state:"done", pct:100, label:"Installed" };
+    loadModels(); renderCaps();
+  } catch (e) {
+    tierPull = { tier:n, state:"error", pct:tierPull.pct, label:(e && e.message ? e.message : "Install failed") };
+    renderCaps();
+  }
+}
 async function renderCaps(){
   let sys = {};
   try { sys = await (await fetch(AGENT_URL + "/api/agent/system")).json(); } catch(e){}
@@ -2040,16 +2085,31 @@ async function renderCaps(){
   const hasTier = n => inst.some(m => (m.role==="coder"||m.role==="reasoner") && Math.round(m.params)===n);
   const hasVision = inst.some(m => /vl|llava|vision|moondream|bakllava|minicpm-?v/i.test(m.name));
   const tiers = [
-    { n:7,  need:7,  gb:"~8 GB",  label:"7B coder + reasoner",  models:["qwen2.5-coder:7b","deepseek-r1:7b"],   unlock:"genuinely useful local coding" },
-    { n:14, need:14, gb:"~16 GB", label:"14B coder + reasoner", models:["qwen2.5-coder:14b","deepseek-r1:14b"], unlock:"the builder + cloning we recommend", star:true },
-    { n:32, need:22, gb:"~24 GB", label:"32B coder + reasoner", models:["qwen2.5-coder:32b","deepseek-r1:32b"], unlock:"sharper output with the headroom" },
-    { n:70, need:44, gb:"~48 GB", label:"70B coder + reasoner", models:["qwen2.5-coder:32b","deepseek-r1:70b"], unlock:"top tier — needs a big machine" },
+    { n:7,  need:7,  gb:"~8 GB",  dl:"~9 GB",  label:"7B coder + reasoner",  models:["qwen2.5-coder:7b","deepseek-r1:7b"],   unlock:"genuinely useful local coding" },
+    { n:14, need:14, gb:"~16 GB", dl:"~18 GB", label:"14B coder + reasoner", models:["qwen2.5-coder:14b","deepseek-r1:14b"], unlock:"the builder + cloning we recommend", star:true },
+    { n:32, need:22, gb:"~24 GB", dl:"~40 GB", label:"32B coder + reasoner", models:["qwen2.5-coder:32b","deepseek-r1:32b"], unlock:"sharper output with the headroom" },
+    { n:70, need:44, gb:"~48 GB", dl:"~63 GB", label:"70B coder + reasoner", models:["qwen2.5-coder:32b","deepseek-r1:70b"], unlock:"top tier — needs a big machine" },
   ];
   const modelRows = tiers.map(t => {
     const installed = hasTier(t.n), can = detected ? eff >= t.need : true;   // undetected -> never a false lock
-    return { status: installed?"active":(detected ? (can?"available":"locked") : "available"), name: t.label+(t.star?" ⭐":""), models: t.models,
-      sub: detected ? (can ? "fits your "+eff+" GB" : "needs "+t.gb+" of memory — more than your "+eff+" GB, so it won't run here") : "needs "+t.gb+" of memory",
-      act: (!installed && can) ? "the installer auto-picks the right tier for your machine" : "", unlock: t.unlock };
+    const status = installed?"active":(detected ? (can?"available":"locked") : "available");
+    if (installed && tierPull.tier === t.n && tierPull.state !== "pulling") tierPull = { tier:null, state:"idle", pct:0, label:"" };
+    const row = { status, name: t.label+(t.star?" ⭐":""), models: t.models, unlock: t.unlock,
+      sub: detected ? (can ? "fits your "+eff+" GB" : "needs "+t.gb+" of memory — more than your "+eff+" GB, so it won't run here") : "needs "+t.gb+" of memory" };
+    if (status === "available") {                                            // runnable but not installed -> offer a proper one-click install (pull + context-tune)
+      if (tierPull.tier === t.n && tierPull.state === "pulling") {
+        row.pill = '<span class="pill pulling">Installing…</span>';
+        row.action = '<div class="capbar"><div class="capbar-fill" id="tierfill" style="width:'+tierPull.pct+'%"></div></div><div class="pulllabel" id="tierlabel">'+escCap(tierPull.label||"Starting…")+'</div>';
+      } else if (tierPull.tier === t.n && tierPull.state === "error") {
+        row.pill = '<span class="pill err">Failed</span>';
+        row.action = '<div class="pullerr" id="tierlabel">'+escCap(tierPull.label)+' — or re-run the installer to add this tier.</div><div class="pullbtns"><button class="capbtn" data-act="install-tier" data-tier="'+t.n+'">↻ Retry</button></div>';
+      } else if (tierPull.state === "pulling") {
+        row.act = "another model is installing — one at a time";
+      } else {
+        row.action = '<div class="pullbtns"><button class="capbtn" data-act="install-tier" data-tier="'+t.n+'">⬇ Install '+t.n+'B coder + reasoner</button><span style="font-size:11.5px;color:#5b6472;align-self:center">'+t.dl+' download</span></div>';
+      }
+    }
+    return row;
   });
   const visCan = !detected || eff >= 7;
   if (hasVision && visionPull.state !== "idle" && visionPull.state !== "pulling") visionPull = { state:"idle", pct:0, label:"" };
@@ -2109,7 +2169,8 @@ capModal.addEventListener("click", e => { if (e.target === capModal) closeCaps()
 capBody.addEventListener("click", e => { const t = e.target.closest("[data-act]"); if (!t) return;
   const a = t.getAttribute("data-act");
   if (a === "install-vision") installVision();
-  else if (a === "copy-vision") copyVisionCmd(t); });
+  else if (a === "copy-vision") copyVisionCmd(t);
+  else if (a === "install-tier") installTier(+t.getAttribute("data-tier")); });
 document.addEventListener("keydown", e => { if (e.key === "Escape" && !capModal.hidden) closeCaps(); });
 loadModels(); detectAgent(); renderList(); input.focus();
 </script>
