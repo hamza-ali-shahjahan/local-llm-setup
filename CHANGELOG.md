@@ -4,6 +4,28 @@ All notable changes to this project are documented here. Format based on
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/); this project aims to
 follow [Semantic Versioning](https://semver.org/).
 
+## [1.16.0] — 2026-06-21
+
+### Added
+- **One-click vision-model install** — the 🧩 Capabilities modal now has a real **⬇ Install**
+  button for the vision model (`qwen2.5vl:7b`). It streams Ollama's download with a live progress
+  bar and flips to **✓ Installed** on its own (with a "copy command" fallback and a Retry on
+  error). No terminal needed.
+- **Vision-critique clone loop** — once a vision model is installed, website clones get a visual
+  pass: the builder screenshots your clone beside the original, a local vision model names the
+  visual gaps (layout, spacing, colour, typography, missing sections), and the coder applies them
+  and re-renders — ending on a fresh critique so the score matches what's on screen. Surfaces a
+  👀 **Vision check** card (visual score + the fixes). New `--agent` endpoint `visioncritique`;
+  the **Vision-critique clone loop** capability flips from *Soon* to **Live** when the model and
+  the agent server are present. Falls back invisibly to the structural clone if no vision model is
+  installed. New guide: [`docs/vision-model.md`](docs/vision-model.md).
+
+### Changed
+- **Clear, worded status in Capabilities** — models and capabilities now show colour-coded pills
+  (**✓ Installed / Not installed / Needs more RAM / Soon**, and **Live / Inactive** for
+  capabilities) instead of two near-identical green dots, so you can tell at a glance what you can
+  actually use right now.
+
 ## [1.15.2] — 2026-06-21
 
 ### Changed

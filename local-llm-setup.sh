@@ -373,7 +373,34 @@ write_chat_html() {
   .caprow .cn .sub { color: #6b7787; }
   .caprow .cn .act { color: #7fd0ff; }
   .caprow .cn .act code, .sysline code { background: #0a0d13; border: 1px solid #2a3140; border-radius: 4px; padding: 1px 5px; font-size: 11.5px; }
-  .caprow.locked { opacity: .5; }
+  .caprow.locked { opacity: .62; }
+  .caprow .st { padding-top: 3px; }
+  .dt { display: inline-block; width: 9px; height: 9px; border-radius: 50%; vertical-align: middle; }
+  .dt.live { background: #3fb950; box-shadow: 0 0 7px rgba(63,185,80,.55); }
+  .dt.avail { background: #4493f8; }
+  .dt.locked { background: #6e7681; }
+  .dt.coming { background: #d29922; }
+  .right { flex: none; margin-left: 12px; }
+  .pill { display: inline-block; font-size: 11px; font-weight: 600; padding: 2px 9px; border-radius: 999px; white-space: nowrap; border: 1px solid transparent; }
+  .pill.live { color: #56d364; background: rgba(63,185,80,.13); border-color: rgba(63,185,80,.35); }
+  .pill.avail { color: #79c0ff; background: rgba(56,139,253,.12); border-color: rgba(56,139,253,.32); }
+  .pill.locked { color: #8b949e; background: rgba(110,118,129,.12); border-color: rgba(110,118,129,.28); }
+  .pill.coming { color: #e3b341; background: rgba(210,153,34,.12); border-color: rgba(210,153,34,.32); }
+  .pill.pulling { color: #79c0ff; background: rgba(56,139,253,.12); border-color: rgba(56,139,253,.32); }
+  .pill.err { color: #ff7b72; background: rgba(248,81,73,.12); border-color: rgba(248,81,73,.35); }
+  .capaction { margin-top: 9px; }
+  .pullbtns { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .capbtn { background: #2b6cff; color: #fff; border: 1px solid #3b78ff; border-radius: 7px; padding: 6px 13px; font-size: 12.5px; font-weight: 600; cursor: pointer; }
+  .capbtn:hover { background: #3b78ff; }
+  .capbtn:disabled { opacity: .5; cursor: default; }
+  .caplink { background: none; border: none; color: #7d8694; font-size: 12px; cursor: pointer; text-decoration: underline; padding: 0; }
+  .caplink:hover { color: #9fb0c4; }
+  .capbar { height: 7px; max-width: 360px; background: #0a0d13; border: 1px solid #222a38; border-radius: 6px; overflow: hidden; }
+  .capbar-fill { height: 100%; width: 0; background: linear-gradient(90deg,#2b6cff,#56d364); transition: width .3s ease; }
+  .pulllabel { font-size: 11.5px; color: #79c0ff; margin-top: 6px; font-variant-numeric: tabular-nums; }
+  .pullerr { font-size: 11.5px; color: #ff9d96; margin-bottom: 7px; line-height: 1.5; max-width: 380px; }
+  .lg { display: inline-block; width: 9px; height: 9px; border-radius: 50%; vertical-align: middle; margin-right: 3px; }
+  .lg.live { background: #3fb950; } .lg.avail { background: #4493f8; } .lg.locked { background: #6e7681; } .lg.coming { background: #d29922; }
   .caplegend { font-size: 11.5px; color: #5b6472; margin-top: 18px; padding-top: 12px; border-top: 1px solid #1e2430; line-height: 1.7; }
   header h1 { font-size: 14px; margin: 0; font-weight: 600; color: #cfe3ff; display: flex; align-items: center; gap: 8px; white-space: nowrap; }
   header .dot { width: 8px; height: 8px; border-radius: 50%; background: #2ecc71; box-shadow: 0 0 8px #2ecc71; flex: none; }
@@ -1046,6 +1073,33 @@ function improvePrompt(sc) {
   if (typeof sc.token_match === "number" && sc.token_match < 70) L.push("- Match the original's corner radii, box-shadows and type scale more closely (your design tokens are off).");
   L.push("Output the COMPLETE updated HTML file in ONE ```html block. Keep everything that already works; only close these gaps.");
   return L.join("\n");
+}
+/* ---------- Vision-critique: a local vision model SEES the clone vs the original ---------- */
+// Backend screenshots both and runs the vision model; returns {ok, visual_score, summary, fixes}.
+async function visionCritique(url, html) {
+  try {
+    const j = await (await fetch(AGENT_URL + "/api/agent/visioncritique", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url, html }), signal: abortCtl.signal })).json();
+    return j;
+  } catch (e) { if (e.name === "AbortError") throw e; return null; }
+}
+// Turn the vision model's fixes into a concrete "make it look like the original" instruction.
+function visionImprovePrompt(vc) {
+  const L = ["A vision model looked at your clone beside a screenshot of the ORIGINAL page and found these VISUAL differences"
+    + (typeof vc.visual_score === "number" ? " (it rated the clone ~" + vc.visual_score + "% visually similar)" : "") + ". Fix them so the clone LOOKS like the original:"];
+  (vc.fixes || []).forEach(f => L.push("- " + f));
+  L.push("Keep the real copy, colours and image URLs you already have. Change layout, spacing, sizing, colour and typography to match the original screenshot. Output the COMPLETE updated HTML file in ONE ```html block.");
+  return L.join("\n");
+}
+// Render the vision verdict using the same task-card styling as the fidelity card.
+function visionCard(vc) {
+  if (!vc || !vc.ok) return "";
+  const sc = typeof vc.visual_score === "number" ? vc.visual_score : null;
+  const tone = sc == null ? "#9fb0c4" : sc >= 80 ? "#2ecc71" : sc >= 55 ? "#e8b84b" : "#ff7a7a";
+  let h = '<div class="tasks" style="margin-top:9px"><div class="tk"><span class="tki" style="border:0;color:' + tone + '">&#128064;</span>'
+    + '<span><b>Vision check' + (sc != null ? ': <span style="color:' + tone + '">~' + sc + '% visual</span>' : '') + '</b> '
+    + '<span class="meta">' + escapeHtml(vc.summary || "") + '</span></span></div>';
+  (vc.fixes || []).slice(0, 5).forEach(f => { h += '<div class="tk tk-queued"><span class="tki"></span><span class="meta">' + escapeHtml(f) + '</span></div>'; });
+  return h + "</div>";
 }
 /* ---------- Goal Mode: forge → agree → pursue → learn ---------- */
 // Pull a JSON object out of a model reply — it may wrap it in prose or a ```json
@@ -1795,6 +1849,7 @@ async function send() {
           // gaps back to the coder, rebuild, re-score; stop on target, no-gain, or cap.
           if (r.cloneUrl) {
             try {
+              let vbest = null;   // best vision critique seen (set by the vision-critique pass below)
               const TARGET = goalActive && goalTarget ? goalTarget : 75, MAX_ROUNDS = goalActive ? 3 : 2;
               let sc = await scoreClone(r.cloneUrl, sessionApp);
               const first = sc ? sc.score : null;
@@ -1827,9 +1882,51 @@ async function send() {
                 if (!improved) break;   // a round that didn't help -> stop
               }
               if (sc) { body.innerHTML = planPrefix() + repairHtml + prose + buildTasks(curLines, true, true) + fidelityCard(sc, first); scrollDown(); }
+              // ---- Vision-critique pass: if a vision model is installed, let it SEE the clone next to
+              // the original and drive a few visual-fix rounds — the lever past the structural plateau.
+              if (sessionApp && sid === currentId) {
+                let vinfo = {};
+                try { vinfo = await fetch(AGENT_URL + "/api/agent/ping").then(x => x.json()); } catch (e) {}
+                if (vinfo && vinfo.vision) {
+                  const VROUNDS = goalActive ? 3 : 2;
+                  for (let vr = 1; vr <= VROUNDS && sid === currentId; vr++) {
+                    repairHtml = taskList([{ status: "active", label: "Vision critique — comparing your clone to the original (round " + vr + " of " + VROUNDS + ")", meta: vinfo.vision }]);
+                    body.innerHTML = planPrefix() + repairHtml + prose + buildTasks(curLines, true, true) + fidelityCard(sc, first) + (vbest ? visionCard(vbest) : "");
+                    scrollDown();
+                    const vc = await visionCritique(r.cloneUrl, sessionApp);
+                    if (!vc || !vc.ok) {                       // vision unavailable/errored — leave the structural result clean
+                      if (!vbest) { repairHtml = ""; body.innerHTML = planPrefix() + repairHtml + prose + buildTasks(curLines, true, true) + fidelityCard(sc, first); scrollDown(); }
+                      break;
+                    }
+                    vbest = vc;
+                    body.innerHTML = planPrefix() + repairHtml + prose + buildTasks(curLines, true, true) + fidelityCard(sc, first) + visionCard(vc);
+                    scrollDown();
+                    const converged = (typeof vc.visual_score === "number" && vc.visual_score >= 90) || !(vc.fixes && vc.fixes.length);
+                    if (vr === VROUNDS || converged) break;     // end on a critique so the shown score matches the rendered app
+                    repairHtml = taskList([{ status: "active", label: "Applying the visual fixes (round " + vr + ")", meta: (typeof vc.visual_score === "number" ? "visual ~" + vc.visual_score + "%" : "") }]);
+                    body.innerHTML = planPrefix() + repairHtml + prose + buildTasks(curLines, true, true) + fidelityCard(sc, first) + visionCard(vc);
+                    showTab("code"); scrollDown();
+                    const vacc = await callModel(t => displayStreaming(body, t, sid), abortCtl.signal,
+                      { model: r.model, system: BUILDER_SYSTEM + "\n\nThis is a VISUAL fidelity fix of a clone you built (shown above). A vision model compared your clone to a screenshot of the original and listed what's off. Apply the fixes and output the COMPLETE updated HTML file.",
+                        messages: sessionMessages.concat([{ role: "user", content: visionImprovePrompt(vc) }]) });
+                    const vapp = extractApp(vacc);
+                    if (!vapp) break;
+                    sessionMessages[sessionMessages.length - 1] = { role: "assistant", content: vacc };
+                    curLines = vapp.replace(/\s+$/, "").split("\n").length;
+                    sessionApp = injectDesign(vapp); setApp(vapp);
+                    await previewSettled();
+                    const rsc = await scoreClone(r.cloneUrl, sessionApp); if (rsc) sc = rsc;   // keep the structural card honest
+                  }
+                  if (vbest && vbest.ok) {
+                    repairHtml = taskList([{ status: "done", label: "Vision pass complete", meta: (typeof vbest.visual_score === "number" ? "visual ~" + vbest.visual_score + "%" : "") }]);
+                    body.innerHTML = planPrefix() + repairHtml + prose + buildTasks(curLines, true, true) + fidelityCard(sc, first) + visionCard(vbest);
+                    scrollDown();
+                  }
+                }
+              }
               if (goalActive && sc) {
                 const reached = sc.score >= TARGET;
-                const runN = await logGoalRun({ kind: "clone", url: r.cloneUrl, capability: goalMeta.capability, metric: goalMeta.metric, target: TARGET, autoScored: true, initial_score: first, final_score: sc.score, rounds: goalRounds, reached: reached, ceiling: reached ? null : sc.score, lever: reached ? null : "vision model" });
+                const runN = await logGoalRun({ kind: "clone", url: r.cloneUrl, capability: goalMeta.capability, metric: goalMeta.metric, target: TARGET, autoScored: true, initial_score: first, final_score: sc.score, rounds: goalRounds, reached: reached, ceiling: reached ? null : sc.score, visual_score: vbest ? vbest.visual_score : null, lever: reached ? null : (vbest ? "vision-critique applied" : "vision model") });
                 body.innerHTML = planPrefix() + repairHtml + prose + buildTasks(curLines, true, true) + fidelityCard(sc, first) + goalVerdictCard(goalMeta, reached, sc.score, runN);
                 scrollDown();
               }
@@ -1856,9 +1953,71 @@ input.addEventListener("input", () => { input.style.height = "auto"; input.style
 document.querySelectorAll(".empty .ex span").forEach(s => s.addEventListener("click", () => { input.value = s.dataset.ex; send(); }));
 
 /* ---------- Capabilities modal: hardware-aware "what can I run + what am I missing" ---------- */
-function capBadge(s){ return s==="active"?"✅":s==="available"?"🟢":s==="locked"?"🔒":"🛠"; }
-function capRowHtml(r){ return '<div class="caprow'+(r.status==="locked"?" locked":"")+'"><span class="st">'+capBadge(r.status)+'</span><div class="cn"><b>'+r.name+'</b>'+(r.sub?'<div class="sub">'+r.sub+'</div>':'')+(r.act?'<div class="act">'+r.act+'</div>':'')+(r.unlock?'<div class="sub">→ '+r.unlock+'</div>':'')+'</div></div>'; }
+// Status -> {dot/pill class, model wording, capability wording}. Words (not lookalike
+// emojis) carry the meaning, so "installed & usable now" reads at a glance.
+const CAP_PILL = {
+  active:    { cls:"live",   model:"✓ Installed",    cap:"Live" },
+  available: { cls:"avail",  model:"Not installed",  cap:"Inactive" },
+  locked:    { cls:"locked", model:"Needs more RAM", cap:"Needs more RAM" },
+  coming:    { cls:"coming", model:"Soon",           cap:"Soon" },
+};
+function capPill(status, kind){ const p = CAP_PILL[status] || CAP_PILL.coming; return '<span class="pill '+p.cls+'">'+(kind==="cap"?p.cap:p.model)+'</span>'; }
+function capRowHtml(r, kind){ const p = CAP_PILL[r.status] || CAP_PILL.coming;
+  return '<div class="caprow '+p.cls+(r.status==="locked"?" locked":"")+'"><span class="st"><i class="dt '+p.cls+'"></i></span>'
+    + '<div class="cn"><b>'+r.name+'</b>'+(r.sub?'<div class="sub">'+r.sub+'</div>':'')+(r.act?'<div class="act">'+r.act+'</div>':'')+(r.unlock?'<div class="sub">→ '+r.unlock+'</div>':'')+(r.action?'<div class="capaction">'+r.action+'</div>':'')+'</div>'
+    + '<div class="right">'+(r.pill||capPill(r.status, kind))+'</div></div>'; }
 let _capPoll = null;
+
+// ---- click-to-install the vision model, in-app, via Ollama's native streaming pull.
+// The page already POSTs to Ollama for chat, so this needs no agent server and no CORS
+// change; the 3s renderCaps poll flips the row to "Installed" once /api/tags sees it.
+const VISION_MODEL = "qwen2.5vl:7b";
+let visionPull = { state:"idle", pct:0, label:"" };   // idle | pulling | done | error
+function escCap(s){ return (s==null?"":String(s)).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
+function fmtGB(n){ return (n/1e9).toFixed(1)+" GB"; }
+function patchVisionProgress(){ const f = el("visfill"); if (f) f.style.width = visionPull.pct+"%"; const l = el("vislabel"); if (l) l.textContent = visionPull.label; }
+async function installVision(){
+  if (visionPull.state === "pulling") return;
+  visionPull = { state:"pulling", pct:0, label:"Starting download…" };
+  renderCaps();
+  try {
+    const res = await fetch(API + "/api/pull", { method:"POST", headers:{ "Content-Type":"application/json" },
+      body: JSON.stringify({ name: VISION_MODEL, stream:true }) });
+    if (!res.ok || !res.body) throw new Error("Ollama returned HTTP " + res.status);
+    const reader = res.body.getReader(), dec = new TextDecoder(); let buf = "";
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream:true });
+      let nl; while ((nl = buf.indexOf("\n")) >= 0) {
+        const line = buf.slice(0, nl).trim(); buf = buf.slice(nl + 1);
+        if (!line) continue;
+        let o; try { o = JSON.parse(line); } catch (e) { continue; }
+        if (o.error) throw new Error(o.error);
+        const st = (o.status || "").trim();
+        if (typeof o.total === "number" && typeof o.completed === "number" && o.total > 0) {
+          visionPull.pct = Math.min(100, Math.round(o.completed / o.total * 100));
+          visionPull.label = "Downloading " + visionPull.pct + "% · " + fmtGB(o.completed) + " / " + fmtGB(o.total);
+        } else if (st) {
+          visionPull.label = st.charAt(0).toUpperCase() + st.slice(1) + "…";
+        }
+        if (/^success$/i.test(st)) visionPull.pct = 100;
+        patchVisionProgress();
+      }
+    }
+    visionPull = { state:"done", pct:100, label:"Installed" };
+    renderCaps();
+  } catch (e) {
+    visionPull = { state:"error", pct:visionPull.pct, label:(e && e.message ? e.message : "Install failed") };
+    renderCaps();
+  }
+}
+function copyVisionCmd(btn){
+  const cmd = "ollama pull " + VISION_MODEL;
+  const ok = () => { if (btn) { const t = btn.textContent; btn.textContent = "copied ✓"; setTimeout(() => { btn.textContent = t; }, 1400); } };
+  if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(cmd).then(ok, ok);
+  else { try { const ta = document.createElement("textarea"); ta.value = cmd; document.body.appendChild(ta); ta.select(); document.execCommand("copy"); ta.remove(); ok(); } catch (e) {} }
+}
 async function renderCaps(){
   let sys = {};
   try { sys = await (await fetch(AGENT_URL + "/api/agent/system")).json(); } catch(e){}
@@ -1882,9 +2041,27 @@ async function renderCaps(){
       act: (!installed && can) ? "the installer auto-picks the right tier for your machine" : "", unlock: t.unlock };
   });
   const visCan = !detected || eff >= 7;
-  modelRows.push({ status: hasVision?"active":(visCan?"available":"locked"), name:"Vision model (qwen2.5vl:7B)",
+  if (hasVision && visionPull.state !== "idle" && visionPull.state !== "pulling") visionPull = { state:"idle", pct:0, label:"" };
+  let visStatus, visPill, visAction = "";
+  if (hasVision) { visStatus = "active"; visPill = '<span class="pill live">✓ Installed</span>'; }
+  else if (!visCan) { visStatus = "locked"; visPill = '<span class="pill locked">Needs more RAM</span>'; }
+  else if (visionPull.state === "pulling") {
+    visStatus = "available"; visPill = '<span class="pill pulling">Installing…</span>';
+    visAction = '<div class="capbar"><div class="capbar-fill" id="visfill" style="width:'+visionPull.pct+'%"></div></div>'
+      + '<div class="pulllabel" id="vislabel">'+escCap(visionPull.label||"Starting…")+'</div>';
+  } else if (visionPull.state === "done") {
+    visStatus = "active"; visPill = '<span class="pill live">✓ Installed</span>';
+  } else if (visionPull.state === "error") {
+    visStatus = "available"; visPill = '<span class="pill err">Failed</span>';
+    visAction = '<div class="pullerr" id="vislabel">'+escCap(visionPull.label)+' — you can run it in a terminal instead.</div>'
+      + '<div class="pullbtns"><button class="capbtn" data-act="install-vision">↻ Retry</button><button class="caplink" data-act="copy-vision">or copy command</button></div>';
+  } else {
+    visStatus = "available"; visPill = '<span class="pill avail">Not installed</span>';
+    visAction = '<div class="pullbtns"><button class="capbtn" data-act="install-vision">⬇ Install vision model</button><button class="caplink" data-act="copy-vision">or copy command</button></div>';
+  }
+  modelRows.push({ status: visStatus, name:"Vision model (qwen2.5vl:7B)",
     sub:"needs ~6 GB (~24 GB to run alongside the coder)", unlock:"lets the builder SEE the page → visual clone fidelity",
-    act:(visCan&&!hasVision)?'available now — <code>ollama pull qwen2.5vl:7b</code> to unlock it':'' });
+    pill: visPill, action: visAction });
   const a = (typeof agentReady !== "undefined") && agentReady;
   const caps = [
     { status:"active", name:"Build single-page apps", sub:"live preview, any model" },
@@ -1892,7 +2069,7 @@ async function renderCaps(){
     { status:a?"active":"available", name:"Clone-fidelity score + iterate-to-target", sub:a?"active":"needs --agent" },
     { status:a?"active":"available", name:"🎯 Goal mode (forge → agree → pursue → learn)", sub:a?"active":"needs --agent" },
     { status:a?"active":"available", name:"Agent tools (run · write · fetch · gitsync)", sub:a?"active":"needs --agent" },
-    { status:"coming", name:"Vision-critique clone loop", sub:"in progress — will use the vision model above" },
+    { status:(a && hasVision)?"active":"available", name:"Vision-critique clone loop", sub:(a && hasVision)?"live — clones get a visual critique pass that drives fixes":(hasVision?"needs the --agent server":"install the vision model above to turn this on") },
     { status:"coming", name:"Multi-file projects", sub:"on the roadmap" },
     { status:"coming", name:"Web search · image generation", sub:"on the roadmap" },
     { status:"coming", name:"Backend / database · one-click deploy", sub:"on the roadmap" },
@@ -1903,9 +2080,9 @@ async function renderCaps(){
       + " → up to the <b>" + (sys.tier||"?").toUpperCase() + "</b> tier"
     : "🖥️ Reading your machine… if this stays, your <code>--agent</code> server is an older version — re-run <code>./local-llm-setup.sh --agent</code> to refresh it. (Showing what's installed below.)";
   capBody.innerHTML = '<div class="sysline">'+sysLine+'</div>'
-    + '<div class="caph">Models — what your machine can run</div>' + modelRows.map(capRowHtml).join("")
-    + '<div class="caph">Capabilities</div>' + caps.map(capRowHtml).join("")
-    + '<div class="caplegend">✅ active &nbsp;·&nbsp; 🟢 available — your machine can run it, just not installed &nbsp;·&nbsp; 🔒 needs more memory &nbsp;·&nbsp; 🛠 coming soon</div>';
+    + '<div class="caph">Models — what your machine can run</div>' + modelRows.map(r => capRowHtml(r)).join("")
+    + '<div class="caph">Capabilities</div>' + caps.map(r => capRowHtml(r, "cap")).join("")
+    + '<div class="caplegend"><span class="lg live"></span> installed &amp; ready to use now &nbsp;·&nbsp; <span class="lg avail"></span> your machine can run it — not installed yet &nbsp;·&nbsp; <span class="lg locked"></span> needs more memory &nbsp;·&nbsp; <span class="lg coming"></span> coming soon</div>';
 }
 function openCapabilities(){
   capModal.hidden = false;
@@ -1918,6 +2095,10 @@ function closeCaps(){ capModal.hidden = true; if (_capPoll) { clearInterval(_cap
 capBtn.addEventListener("click", openCapabilities);
 capClose.addEventListener("click", closeCaps);
 capModal.addEventListener("click", e => { if (e.target === capModal) closeCaps(); });
+capBody.addEventListener("click", e => { const t = e.target.closest("[data-act]"); if (!t) return;
+  const a = t.getAttribute("data-act");
+  if (a === "install-vision") installVision();
+  else if (a === "copy-vision") copyVisionCmd(t); });
 document.addEventListener("keydown", e => { if (e.key === "Escape" && !capModal.hidden) closeCaps(); });
 loadModels(); detectAgent(); renderList(); input.focus();
 </script>
@@ -2627,6 +2808,104 @@ def screenshot(url=None, html=None, width=1280, height=1600, name="shot",
             "bytes": len(png), "width": w, "height": h, "backend": backend,
             "dataurl": "data:image/png;base64," + base64.b64encode(png).decode()}
 
+# ---------- vision-critique: let a local vision model SEE the clone vs the original ----------
+# The structural score is blind to pixels; a multimodal model (qwen2.5-VL / llava) CAN look at a
+# screenshot of the clone beside the original and name the visual gaps. We screenshot both with the
+# same browser used everywhere else, then ask Ollama's /api/chat (images=) for concrete fixes. The
+# coder applies them and we re-render — the lever past the text-digest structural plateau.
+OLLAMA = os.environ.get("OLLAMA_HOST") or "http://127.0.0.1:11434"
+VISION_TIMEOUT = int(os.environ.get("LLM_VISION_TIMEOUT", "200"))
+_VISION_RE = re.compile(r'vl|llava|vision|moondream|bakllava|minicpm-?v', re.I)
+
+def _ollama_models():
+    """Names of locally-installed Ollama models (best-effort; never raises)."""
+    try:
+        with urllib.request.urlopen(OLLAMA + "/api/tags", timeout=5) as r:
+            data = json.loads(r.read() or b"{}")
+        return [m.get("name", "") for m in data.get("models", []) if m.get("name")]
+    except Exception:
+        return []
+
+def vision_model(prefer=None):
+    """The installed vision model to use, or None. Honours an exact requested name first."""
+    names = _ollama_models()
+    if prefer and (prefer in names or (prefer + ":latest") in names):
+        return prefer
+    return next((n for n in names if _VISION_RE.search(n)), None)
+
+def _json_loose(s):
+    """Pull a JSON object out of a model reply that may wrap it in prose or a ``` fence."""
+    s = (s or "").strip()
+    try:
+        return json.loads(s)
+    except Exception:
+        m = re.search(r'\{.*\}', s, re.S)
+        if m:
+            try:
+                return json.loads(m.group(0))
+            except Exception:
+                pass
+    return {}
+
+def _shot_b64(url=None, html=None, width=1024, height=1480, name="vc"):
+    s = screenshot(url=url, html=html, width=width, height=height, name=name, full_page=False)
+    du = s.get("dataurl", "")
+    return du.split(",", 1)[1] if "," in du else du
+
+VISION_PROMPT = (
+    "You are a meticulous front-end design reviewer. The FIRST image is a CLONE (a local rebuild). "
+    "The SECOND image is the ORIGINAL target website. Compare them VISUALLY and report what makes the "
+    "clone look different from the original, focusing on the highest-impact differences a viewer notices "
+    "first: overall layout and section order, spacing/density, colours and backgrounds, typography "
+    "(sizes/weights/family), imagery, and any missing or extra sections.\n\n"
+    "Respond with STRICT JSON only — no prose, no code fence — in exactly this shape:\n"
+    '{"visual_score": <integer 0-100, how visually close the clone is to the original>, '
+    '"summary": "<one short sentence>", '
+    '"fixes": ["<one concrete, specific change the coder should make>", "..."]}\n'
+    "Give 3 to 7 fixes. Each must be concrete and actionable (e.g. \"Make the hero background pure "
+    "black, not dark grey\", \"The nav should be one centered row, not stacked\", \"The headline is far "
+    "too small — make it about 3x larger and bold\"). Do not include generic advice."
+)
+
+def vision_critique(target_url, html, model=None, width=1024, height=1480):
+    vm = vision_model(model)
+    if not vm:
+        return {"ok": False, "error": "no vision model installed", "need": "qwen2.5vl:7b"}
+    if not html or not (target_url or "").strip():
+        return {"ok": False, "error": "need both the clone html and the target url"}
+    clone_b64 = _shot_b64(html=html, name="clone", width=width, height=height)
+    target_b64 = _shot_b64(url=target_url, name="target", width=width, height=height)
+    body = json.dumps({
+        "model": vm, "stream": False, "format": "json",
+        "messages": [{"role": "user", "content": VISION_PROMPT, "images": [clone_b64, target_b64]}],
+        # two images (~1.9k vision tokens each) + the prompt overflow the model's 4k default
+        # context, so ask for a bigger window — 8k comfortably fits both shots + the JSON reply.
+        "options": {"temperature": 0.2, "num_ctx": 8192},
+    }).encode()
+    req = urllib.request.Request(OLLAMA + "/api/chat", data=body,
+                                 headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=VISION_TIMEOUT) as r:
+            out = json.loads(r.read() or b"{}")
+    except urllib.error.HTTPError as e:
+        detail = ""
+        try:
+            detail = e.read().decode("utf-8", "replace")[:400]
+        except Exception:
+            pass
+        return {"ok": False, "model": vm,
+                "error": "vision model call failed (HTTP %d)%s" % (e.code, (": " + detail) if detail else "")}
+    content = ((out.get("message") or {}).get("content") or "").strip()
+    p = _json_loose(content)
+    score = p.get("visual_score")
+    try:
+        score = max(0, min(100, int(round(float(score)))))
+    except Exception:
+        score = None
+    fixes = [str(x).strip() for x in (p.get("fixes") or []) if str(x).strip()][:7]
+    return {"ok": True, "model": vm, "visual_score": score,
+            "summary": (str(p.get("summary") or "")).strip()[:300], "fixes": fixes}
+
 # ---------- local git sync: turn a generated project into a real git repo ----------
 GITIGNORE_DEFAULT = """# Dependencies
 node_modules/
@@ -2871,8 +3150,9 @@ class H(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path.startswith("/api/agent/ping"):
             return self._json(200, {"ok": True, "workspace": WORKSPACE,
-                                    "tools": ["run", "write", "read", "fetch", "inspect", "extract", "score", "screenshot", "gitsync", "goallog"],
+                                    "tools": ["run", "write", "read", "fetch", "inspect", "extract", "score", "screenshot", "gitsync", "goallog", "visioncritique"],
                                     "goal_runs": GOAL_LOG,
+                                    "vision": vision_model(),
                                     "browser": bool(find_browser()) or _have_playwright(),
                                     "screenshot_backend": ("playwright" if _have_playwright()
                                                            else ("chrome" if find_browser() else None))})
@@ -2975,6 +3255,13 @@ class H(BaseHTTPRequestHandler):
             try:
                 n = append_goal_run(req.get("run") or req)
                 return self._json(200, {"ok": True, "count": n, "path": GOAL_LOG})
+            except Exception as e:
+                return self._json(200, {"ok": False, "error": str(e)})
+        if path.startswith("/api/agent/visioncritique"):
+            try:
+                return self._json(200, vision_critique((req.get("url") or req.get("target") or "").strip(),
+                                                        req.get("html") or "", model=req.get("model"),
+                                                        width=int(req.get("width", 1024)), height=int(req.get("height", 1480))))
             except Exception as e:
                 return self._json(200, {"ok": False, "error": str(e)})
         return self._json(404, {"error": "unknown endpoint"})
