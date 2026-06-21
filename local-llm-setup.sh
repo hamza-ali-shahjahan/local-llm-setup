@@ -29,7 +29,7 @@
 #   ./local-llm-setup.sh --help
 #
 set -euo pipefail
-VERSION="1.15.0"
+VERSION="1.15.1"
 
 # ----------------------------------------------------------------------------
 # Pretty output (degrades gracefully if the terminal has no color)
@@ -579,6 +579,7 @@ write_chat_html() {
         <button class="picker-btn" id="pickerBtn" type="button"><span class="name" id="pickerName">Loading...</span><span class="caret">&#9660;</span></button>
         <ul class="menu" id="menu" hidden></ul>
       </div>
+      <button class="tbtn" id="capBtn" title="What your machine can run + what you can add">&#129513; Capabilities</button>
     </div>
     <div class="toggles">
       <span class="togwrap">
@@ -591,8 +592,7 @@ write_chat_html() {
       </span>
     </div>
     <div class="hgroup hright">
-      <button class="tbtn" id="capBtn" title="What your machine can run + what you can add">&#129513; Capabilities</button>
-      <button class="tbtn" id="dlBtn" title="Download the current app" disabled>Download</button>
+      <button class="tbtn" id="dlBtn" title="Download the current app you've built as an .html file" disabled>Download</button>
     </div>
   </header>
 
@@ -1858,14 +1858,17 @@ document.querySelectorAll(".empty .ex span").forEach(s => s.addEventListener("cl
 /* ---------- Capabilities modal: hardware-aware "what can I run + what am I missing" ---------- */
 function capBadge(s){ return s==="active"?"✅":s==="available"?"🟢":s==="locked"?"🔒":"🛠"; }
 function capRowHtml(r){ return '<div class="caprow'+(r.status==="locked"?" locked":"")+'"><span class="st">'+capBadge(r.status)+'</span><div class="cn"><b>'+r.name+'</b>'+(r.sub?'<div class="sub">'+r.sub+'</div>':'')+(r.act?'<div class="act">'+r.act+'</div>':'')+(r.unlock?'<div class="sub">→ '+r.unlock+'</div>':'')+'</div></div>'; }
-async function openCapabilities(){
-  capModal.hidden = false;
-  capBody.innerHTML = '<div class="sysline">Detecting your system…</div>';
+let _capPoll = null;
+async function renderCaps(){
   let sys = {};
   try { sys = await (await fetch(AGENT_URL + "/api/agent/system")).json(); } catch(e){}
+  const detected = !!(sys && sys.ok && sys.effective_gb);
   const eff = sys.effective_gb || 0;
-  const hasTier = n => models.some(m => (m.role==="coder"||m.role==="reasoner") && Math.round(m.params)===n);
-  const hasVision = models.some(m => /vl|llava|vision|moondream|bakllava|minicpm-?v/i.test(m.name));
+  // re-read the LIVE model list each tick, so pulling a model (e.g. the vision one) shows up at once
+  let inst = models;
+  try { const ns = ((await (await fetch(API + "/api/tags")).json()).models || []).map(m => m.name); if (ns.length) inst = ns.map(n => ({ name: n, params: parseParams(n), role: parseRole(n) })); } catch(e){}
+  const hasTier = n => inst.some(m => (m.role==="coder"||m.role==="reasoner") && Math.round(m.params)===n);
+  const hasVision = inst.some(m => /vl|llava|vision|moondream|bakllava|minicpm-?v/i.test(m.name));
   const tiers = [
     { n:7,  need:7,  gb:"~8 GB",  label:"7B coder + reasoner",  unlock:"genuinely useful local coding" },
     { n:14, need:14, gb:"~16 GB", label:"14B coder + reasoner", unlock:"the builder + cloning we recommend", star:true },
@@ -1873,12 +1876,12 @@ async function openCapabilities(){
     { n:70, need:44, gb:"~48 GB", label:"70B coder + reasoner", unlock:"top tier — needs a big machine" },
   ];
   const modelRows = tiers.map(t => {
-    const can = eff >= t.need, inst = hasTier(t.n);
-    return { status: inst?"active":(can?"available":"locked"), name: t.label+(t.star?" ⭐":""),
-      sub: "needs "+t.gb+(can?"":" — your "+eff+" GB can't hold it"),
-      act: (can&&!inst) ? "the installer auto-picks this tier for your machine" : "", unlock: t.unlock };
+    const installed = hasTier(t.n), can = detected ? eff >= t.need : true;   // undetected -> never a false lock
+    return { status: installed?"active":(detected ? (can?"available":"locked") : "available"), name: t.label+(t.star?" ⭐":""),
+      sub: "needs "+t.gb+(detected && !can ? " — your "+eff+" GB can't hold it" : ""),
+      act: (!installed && can) ? "the installer auto-picks the right tier for your machine" : "", unlock: t.unlock };
   });
-  const visCan = eff >= 7;
+  const visCan = !detected || eff >= 7;
   modelRows.push({ status: hasVision?"active":(visCan?"available":"locked"), name:"Vision model (qwen2.5vl:7B)",
     sub:"needs ~6 GB (~24 GB to run alongside the coder)", unlock:"lets the builder SEE the page → visual clone fidelity",
     act:(visCan&&!hasVision)?'available now — <code>ollama pull qwen2.5vl:7b</code> to unlock it':'' });
@@ -1894,20 +1897,28 @@ async function openCapabilities(){
     { status:"coming", name:"Web search · image generation", sub:"on the roadmap" },
     { status:"coming", name:"Backend / database · one-click deploy", sub:"on the roadmap" },
   ];
-  const sysLine = sys.os
+  const sysLine = detected
     ? "🖥️ " + (sys.os==="Darwin"?"macOS":sys.os) + " · " + (sys.gpu||"CPU only") + " · " + (sys.ram_gb||"?") + " GB RAM"
       + (sys.vram_gb && sys.gpu && !/unified/i.test(sys.gpu) ? " · " + sys.vram_gb + " GB VRAM" : "")
       + " → up to the <b>" + (sys.tier||"?").toUpperCase() + "</b> tier"
-    : "Couldn't detect your system — start the <code>--agent</code> server to see your full capabilities.";
+    : "🖥️ Reading your machine… if this stays, your <code>--agent</code> server is an older version — re-run <code>./local-llm-setup.sh --agent</code> to refresh it. (Showing what's installed below.)";
   capBody.innerHTML = '<div class="sysline">'+sysLine+'</div>'
     + '<div class="caph">Models — what your machine can run</div>' + modelRows.map(capRowHtml).join("")
     + '<div class="caph">Capabilities</div>' + caps.map(capRowHtml).join("")
     + '<div class="caplegend">✅ active &nbsp;·&nbsp; 🟢 available — your machine can run it, just not installed &nbsp;·&nbsp; 🔒 needs more memory &nbsp;·&nbsp; 🛠 coming soon</div>';
 }
+function openCapabilities(){
+  capModal.hidden = false;
+  capBody.innerHTML = '<div class="sysline">Detecting your system…</div>';
+  renderCaps();
+  if (_capPoll) clearInterval(_capPoll);
+  _capPoll = setInterval(renderCaps, 3000);   // live: reflects the server coming up or a model being pulled
+}
+function closeCaps(){ capModal.hidden = true; if (_capPoll) { clearInterval(_capPoll); _capPoll = null; } }
 capBtn.addEventListener("click", openCapabilities);
-capClose.addEventListener("click", () => capModal.hidden = true);
-capModal.addEventListener("click", e => { if (e.target === capModal) capModal.hidden = true; });
-document.addEventListener("keydown", e => { if (e.key === "Escape") capModal.hidden = true; });
+capClose.addEventListener("click", closeCaps);
+capModal.addEventListener("click", e => { if (e.target === capModal) closeCaps(); });
+document.addEventListener("keydown", e => { if (e.key === "Escape" && !capModal.hidden) closeCaps(); });
 loadModels(); detectAgent(); renderList(); input.focus();
 </script>
 </body>

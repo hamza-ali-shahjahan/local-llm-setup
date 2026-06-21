@@ -4,6 +4,19 @@ All notable changes to this project are documented here. Format based on
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/); this project aims to
 follow [Semantic Versioning](https://semver.org/).
 
+## [1.15.1] — 2026-06-21
+
+### Changed
+- **Capabilities button moved next to the model picker** (was top-right, easy to miss).
+- **The Capabilities modal is now live** — it polls every ~3s while open, so it reflects the
+  agent server coming up or a model being pulled (e.g. the vision model) in real time, re-reading
+  the installed-model list each tick.
+
+### Fixed
+- **No more false "0 GB — can't hold it" locks when the modal can't reach the detection endpoint**
+  (e.g. an older running server). It degrades gracefully — shows what's installed plus a clear
+  "re-run `--agent` to refresh the server" note, instead of locking every model.
+
 ## [1.15.0] — 2026-06-21
 
 **Capabilities modal** — a 🧩 Capabilities button that shows, for *your* machine, what you can run, what's installed vs available to add, and what's coming.
