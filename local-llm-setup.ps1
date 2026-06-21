@@ -475,7 +475,7 @@ function Write-ChatHtml {
   .tk-queued { color: #5b6472; }
   .tk-queued .tki::before { content: "\25CB"; color: #4d5765; font-size: 12px; }
   .tk-active { color: #cfe3ff; }
-  .tk-active .tki { border: 0; border-radius: 50%; background: conic-gradient(from 0deg, rgba(43,108,255,0) 8%, #2b6cff 100%); -webkit-mask: radial-gradient(closest-side, transparent 58%, #000 60%); mask: radial-gradient(closest-side, transparent 58%, #000 60%); animation: spin .9s linear infinite; }
+  .tk-active .tki { border: 2px solid #2a3140; border-top-color: #2b6cff; border-radius: 50%; animation: spin .8s linear infinite; }
   .tk-done { color: #b6c0cf; }
   .tk-done .tki::before { content: "\2713"; color: #2ecc71; font-weight: 700; font-size: 13px; }
   .tk-fail .tki::before { content: "\2715"; color: #ff7a7a; font-weight: 700; }
@@ -747,12 +747,16 @@ const buildingIds = new Set();       // project ids generating right now -> side
 // model routing: Auto picks the best brain per task; the picker is an override
 let autoMode = true;
 let models = [];                     // [{ name, params, role, lean }]
-let bestCoder = "", bestReasoner = "", fastest = "";
+let bestCoder = "", bestReasoner = "", fastest = "", bestVision = "";
 function newId() { return "c" + Math.random().toString(36).slice(2, 9); }
 
 /* ---------- model index + routing ---------- */
 function parseParams(name) { const m = name.match(/(\d+(?:\.\d+)?)\s*b\b/i); return m ? parseFloat(m[1]) : 0; }
+// vision models (same family regex the agent server uses) — checked FIRST so a
+// multimodal model is never mistaken for a coder/general and pulled into routing.
+const VISION_RE = /vl|llava|vision|moondream|bakllava|minicpm-?v/i;
 function parseRole(name) {
+  if (VISION_RE.test(name)) return "vision";
   if (/r1|reason|qwq|\bo1\b|think/i.test(name)) return "reasoner";
   if (/coder|code|starcoder|codestral|codellama/i.test(name)) return "coder";
   return "general";
@@ -764,8 +768,10 @@ function indexModels(names) {
   const coders = models.filter(m => m.role === "coder").sort((a, b) => coderScore(b) - coderScore(a));
   const reasoners = models.filter(m => m.role === "reasoner").sort((a, b) => b.params - a.params);
   const generals = models.filter(m => m.role === "general").sort((a, b) => b.params - a.params);
+  const visions = models.filter(m => m.role === "vision").sort((a, b) => b.params - a.params);
   bestCoder = (coders[0] || generals[0] || models[0] || {}).name || "";
   bestReasoner = (reasoners[0] || {}).name || "";
+  bestVision = (visions[0] || {}).name || "";                              // the model that can SEE attached images
   fastest = [...models].sort((a, b) => a.params - b.params)[0]?.name || "";
 }
 // Route a prompt to the right brain + decide whether to plan first.
@@ -856,10 +862,11 @@ function cloneSpecFromDigest(d) {
   return L.join("\n");
 }
 // human label for a model: "qwen2.5-coder · 14B · Coder"
-function roleTag(r) { return r === "coder" ? "Coder" : r === "reasoner" ? "Reasoner" : "General"; }
+function roleTag(r) { return r === "coder" ? "Coder" : r === "reasoner" ? "Reasoner" : r === "vision" ? "Vision" : "General"; }
 function badgeFor(name) {
   if (name === bestCoder) return "Best for building";
   if (name === bestReasoner) return "Best for reasoning";
+  if (name === bestVision) return "Sees images";
   if (name === fastest && models.length > 1) return "Fastest";
   return "";
 }
@@ -982,8 +989,13 @@ function parseStream(acc) {
 }
 // A traceable task list, Claude-Code style: each row is queued / active / done.
 function taskList(items) {
+  // The build bubble re-renders ~15x/s while streaming, recreating these nodes — which
+  // restarts each spinner's CSS rotation at 0° and looks like a jitter. Anchor the active
+  // spinner to the page clock with a negative animation-delay so a freshly-created element
+  // resumes at the angle it "should" be at → a continuous, smooth spin across repaints.
+  const phase = ' style="animation-delay:-' + Math.round(performance.now()) + 'ms"';
   return '<div class="tasks">' + items.map(t =>
-    '<div class="tk tk-' + t.status + '"><span class="tki"></span><span>' + t.label +
+    '<div class="tk tk-' + t.status + '"><span class="tki"' + (t.status === "active" ? phase : '') + '></span><span>' + t.label +
     (t.meta ? ' <span class="meta">' + t.meta + '</span>' : '') + '</span></div>'
   ).join("") + "</div>";
 }
@@ -1286,7 +1298,7 @@ log.addEventListener("scroll", () => { stick = atBottom(); jump.hidden = stick; 
 jump.addEventListener("click", () => { stick = true; log.scrollTop = log.scrollHeight; jump.hidden = true; });
 // keep the plan card's expanded state across streaming repaints (it gets rebuilt
 // each paint). Read happens pre-toggle, so the new state is !current.
-log.addEventListener("click", e => { const s = e.target.closest("details.plan > summary"); if (s) planOpen = !s.parentElement.open; });
+log.addEventListener("click", e => { const s = e.target.closest("details.plan > summary"); if (s) { e.preventDefault(); planOpen = !planOpen; if (s.parentElement) s.parentElement.open = planOpen; } });
 
 /* ---------- workspace ---------- */
 function extractApp(text) {
@@ -1820,6 +1832,10 @@ async function send() {
               const TARGET = goalActive && goalTarget ? goalTarget : 75, MAX_ROUNDS = goalActive ? 3 : 2;
               let sc = await scoreClone(r.cloneUrl, sessionApp);
               const first = sc ? sc.score : null;
+              // Never end on a version worse than the best we ever scored. Refinement —
+              // structural OR vision — explores freely but the KEPT clone is always the
+              // highest-scoring one, so a weak round can't regress the result.
+              let bestRaw = app, bestAcc = acc, bestScore = sc;
               if (goalActive && sc) goalRounds.push({ round: 0, score: sc.score });
               if (sc) { body.innerHTML = planPrefix() + repairHtml + prose + buildTasks(curLines, true, true) + fidelityCard(sc); scrollDown(); }
               let round = 0;
@@ -1843,6 +1859,7 @@ async function send() {
                 const improved = nsc.score > sc.score;
                 repairHtml = taskList([{ status: improved ? "done" : "fail", label: "Refined the clone (round " + round + ")", meta: sc.score + "% → " + nsc.score + "%" }]);
                 sc = nsc;
+                if (nsc.score > bestScore.score) { bestRaw = fapp; bestAcc = facc; bestScore = nsc; }
                 if (goalActive) goalRounds.push({ round, score: nsc.score });
                 body.innerHTML = planPrefix() + repairHtml + prose + buildTasks(curLines, true, true) + fidelityCard(sc, first);
                 scrollDown();
@@ -1883,6 +1900,7 @@ async function send() {
                     sessionApp = injectDesign(vapp); setApp(vapp);
                     await previewSettled();
                     const rsc = await scoreClone(r.cloneUrl, sessionApp); if (rsc) sc = rsc;   // keep the structural card honest
+                    if (rsc && rsc.score > bestScore.score) { bestRaw = vapp; bestAcc = vacc; bestScore = rsc; }   // only keep a vision round if it didn't regress fidelity
                   }
                   if (vbest && vbest.ok) {
                     repairHtml = taskList([{ status: "done", label: "Vision pass complete", meta: (typeof vbest.visual_score === "number" ? "visual ~" + vbest.visual_score + "%" : "") }]);
@@ -1890,6 +1908,15 @@ async function send() {
                     scrollDown();
                   }
                 }
+              }
+              // Restore the best-scoring version so the kept + shown clone is never worse than our peak.
+              if (bestScore && sc && bestScore.score > sc.score) {
+                sessionApp = injectDesign(bestRaw); sc = bestScore;
+                sessionMessages[sessionMessages.length - 1] = { role: "assistant", content: bestAcc };
+                curLines = bestRaw.replace(/\s+$/, "").split("\n").length;
+                if (sid === currentId) setApp(bestRaw);
+                body.innerHTML = planPrefix() + repairHtml + prose + buildTasks(curLines, true, true) + fidelityCard(sc, first) + (vbest ? visionCard(vbest) : "");
+                scrollDown();
               }
               if (goalActive && sc) {
                 const reached = sc.score >= TARGET;

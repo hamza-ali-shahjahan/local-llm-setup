@@ -4,6 +4,23 @@ All notable changes to this project are documented here. Format based on
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/); this project aims to
 follow [Semantic Versioning](https://semver.org/).
 
+## [1.16.1] — 2026-06-21
+
+### Fixed
+- **Smooth task spinner (for real this time).** The "working" spinner jittered because the build
+  bubble re-renders ~15×/s while streaming, recreating the spinner and restarting its rotation at
+  0° each time. It's now a clean ring anchored to the page clock (a negative `animation-delay`), so
+  a freshly-rendered spinner resumes mid-spin instead of snapping back — a continuous, smooth spin.
+- **"View plan" now expands.** Clicking *Planned the build → view plan* opened nothing: the toggle
+  read the `<details>` open state before the browser flipped it, set the wrong value, and the next
+  repaint re-collapsed it. The toggle is deterministic now, so the plan the local model wrote
+  actually shows.
+
+### Changed
+- **A clone never ends below its best.** Across the structural and vision refine rounds, the
+  builder now keeps the **highest-scoring** version it produced and restores it at the end — so a
+  weak refine round can't regress the result you're shown.
+
 ## [1.16.0] — 2026-06-21
 
 ### Added
