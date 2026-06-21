@@ -4,6 +4,17 @@ All notable changes to this project are documented here. Format based on
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/); this project aims to
 follow [Semantic Versioning](https://semver.org/).
 
+## [1.15.2] — 2026-06-21
+
+### Changed
+- **Plain-English Capabilities wording** — a locked model now reads *"needs ~48 GB of memory —
+  more than your 24 GB, so it won't run here"* (and runnable ones say *"fits your 24 GB"*),
+  instead of the confusing *"your 0 GB can't hold it."*
+
+### Fixed
+- **Smoother task spinner** — the rotating "working" indicator was a hard-seam border ring that
+  looked like it glitched at one point; it's now a smooth gradient ring, slowed slightly.
+
 ## [1.15.1] — 2026-06-21
 
 ### Changed
