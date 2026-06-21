@@ -356,6 +356,15 @@ Point any OpenAI-compatible app, IDE, or agent at it directly:
 
 Done experimenting? `./local-llm-setup.sh --uninstall` (or `-Uninstall`) removes the models this tool added, and can remove Ollama itself — both ask first.
 
+## Vision model — sharper website cloning (optional)
+
+By default the builder clones a page *structurally* (palette, fonts, sections, copy) — accurate but blind to pixels. Install a local vision model and clones get a **visual-critique pass**: it screenshots your clone next to the original and feeds concrete fixes (layout, spacing, colour, type) back to the coder.
+
+- **Enable it:** open **🧩 Capabilities** in the builder → **Install vision model**, or run `ollama pull qwen2.5vl:7b`.
+- **Cost:** ~6 GB disk, ~24 GB RAM to run alongside the coder (it swaps models per round, so clones get slower). It's a local 7B model — meaningfully closer, not pixel-perfect.
+
+Full details, requirements, and the implementation gotchas (the Ollama context-window trap especially): **[docs/vision-model.md](docs/vision-model.md)**.
+
 ## Requirements
 
 - **macOS** on Apple silicon (M1 or newer recommended), **Linux** (x86-64 or ARM64), or **Windows 10/11** (native — no WSL)

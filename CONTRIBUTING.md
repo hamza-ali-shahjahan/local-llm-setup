@@ -17,6 +17,8 @@ A change to one (a new tier, a new flag, a reworded prompt) should land in the o
 - **Improve hardware detection** for machines a script reads incorrectly.
 - **Clarify a message** that confused you as a first-timer.
 
+**Touching the builder or the cloning / vision path?** Read **[docs/vision-model.md](docs/vision-model.md)** first — the Ollama context-window trap (`num_ctx`), the swallowed-error-body gotcha, and the "restart the agent server with the same venv or you silently downgrade Playwright→Chrome" lesson will bite you otherwise.
+
 ## Ground rules
 
 1. **Each script stays single-file and dependency-free.** The Bash script needs only Bash + standard Unix tools; the PowerShell script needs only Windows PowerShell 5.1+ (built into Windows). No Python, no Node, no extra runtime. The whole point is "one file anyone can read and run."
