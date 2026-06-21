@@ -45,7 +45,7 @@ param(
   [switch]$Help
 )
 
-$AppVersion = '1.12.2'   # NB: not $Version — that name is the -Version switch param
+$AppVersion = '1.13.0'   # NB: not $Version — that name is the -Version switch param
 $Ctx = 8192             # default context window — big enough for real work, light on RAM
 $HomeDir = if ($env:USERPROFILE) { $env:USERPROFILE } else { $HOME }
 $ChatDir = Join-Path $HomeDir '.local-llm-setup\chat'   # where the chat page is written
@@ -533,7 +533,7 @@ function Write-ChatHtml {
       </span>
       <span class="togwrap">
         <label class="toggle" id="goalLabel" title="Goal Mode: forge a measurable goal, agree to it, then pursue it (build &rarr; score &rarr; iterate) and log what it learns"><input type="checkbox" id="goalChk"><span class="sw"></span> &#127919; Goal</label>
-        <span class="info" tabindex="0" role="button" aria-label="What does Goal mode do?">i<span class="tip"><b>Goal mode</b> turns your request into a <b>measurable goal you approve</b>, then builds, scores and improves it toward that target on its own — and logs what it learned. Best for <b>cloning a real site</b> to a fidelity&nbsp;%. Needs <code>--agent</code>.</span></span>
+        <span class="info" tabindex="0" role="button" aria-label="What does Goal mode do?">i<span class="tip"><b>Goal mode</b> turns your request into a <b>measurable goal you approve</b>, then builds, scores and <b>iterates toward the target</b> on its own — logging what it learns. Works for any build (it iterates to a <b>requirements-coverage</b> target) and is especially strong at <b>cloning a real site</b> (a fidelity&nbsp;%). Needs <code>--agent</code>.</span></span>
       </span>
     </div>
     <div class="hgroup hright">
@@ -999,16 +999,16 @@ function fallbackGoal(text, auto) {
     capability: clone ? "Reproduce " + auto.cloneUrl + " as one self-contained page, matching its layout, palette and fonts."
                       : "Build: " + text.slice(0, 120),
     metric: clone ? { name: "Structural clone fidelity", how: "the scorer vs the real page", target: 75 }
-                  : { name: "Acceptance by inspection", how: "manual review against the spec", target: null },
+                  : { name: "Requirements coverage", how: "strict model-graded check of the requirements vs the build", target: 80 },
     evals: clone ? ["Fidelity ≥ 75% on a fresh run", "Nav + hero + main sections all present"]
-                 : ["The described features work", "Renders with no runtime errors"],
+                 : ["The described features are implemented and work", "Renders with no runtime errors"],
     acceptance: clone ? "Fidelity hits target on a fresh run, or an honest ceiling is reported."
-                      : "The app matches the spec on inspection.",
+                      : "Every requirement is implemented (coverage ≥ target) on a fresh run.",
     nonGoals: clone ? ["Not pixel-perfect (a local model can't see)", "No backend beyond what's asked"]
                     : ["No backend / persistence beyond what's asked"],
-    checkA: "A blank page can't fake it — with no palette / sections / headings the structural score stays low.",
+    checkA: "A blank or off-topic page can't fake it — it would miss the requirements (low coverage) or fail to render.",
     checkB: clone ? "A local 14B from a text digest plateaus ~30% visual; structural target capped at 75. Lever: a vision model."
-                  : "No automatic scorer for this kind of ask — acceptance is by inspection, not a numeric loop."
+                  : "Coverage is model-graded (presence of each requirement); behavioural testing would harden it further."
   };
 }
 // Forge a measurable goal from the ask (reasoner -> JSON), normalised + made honest.
@@ -1022,14 +1022,16 @@ async function forgeGoal(text, auto, note, body) {
     g = parseGoalJSON(raw);
   } catch (e) { if (e.name === "AbortError") throw e; }
   if (!g || !g.capability) g = fallbackGoal(text, auto);
-  // the honest truth about scorability is OURS, not the model's: we can only auto-score a
-  // CLONE (structural fidelity vs the real page). Force the card consistent with that.
   g.cloneUrl = auto.cloneUrl || null;
-  g.autoScored = !!g.cloneUrl;
   if (!g.metric || typeof g.metric !== "object") g.metric = {};
-  if (g.autoScored) { const t = +g.metric.target; g.metric.target = (t >= 40 && t <= 88) ? t : 75; if (!g.metric.name) g.metric.name = "Structural clone fidelity"; }
-  else { g.metric.target = null; if (!g.metric.name) g.metric.name = "Acceptance by inspection"; }
   if (!Array.isArray(g.evals)) g.evals = [];
+  // Scorer selection — OURS, not the model's word. A clone scores structural fidelity; ANY
+  // build with checkable requirements scores requirements-coverage (model-graded, strict),
+  // so Goal's iterate-loop now works beyond clones; a pure taste call (no evals) is honestly
+  // "by inspection". Adding a scorer here is how Goal mode grows to new kinds of goal.
+  if (g.cloneUrl) { g.scorer = "clone"; g.autoScored = true; g.metric.name = g.metric.name || "Structural clone fidelity"; const t = +g.metric.target; g.metric.target = (t >= 40 && t <= 88) ? t : 75; }
+  else if (g.evals.length) { g.scorer = "spec"; g.autoScored = true; g.metric.name = "Requirements coverage"; const t = +g.metric.target; g.metric.target = (t >= 50 && t <= 95) ? t : 80; }
+  else { g.scorer = null; g.autoScored = false; g.metric.name = "Acceptance by inspection"; g.metric.target = null; }
   if (!Array.isArray(g.nonGoals)) g.nonGoals = [];
   return g;
 }
@@ -1085,9 +1087,50 @@ function goalVerdictCard(g, reached, finalScore, runN) {
   const t = g.metric && g.metric.target;
   let line, tone;
   if (reached) { tone = "#2ecc71"; line = "<b>Goal reached</b> — " + finalScore + "% &ge; " + t + "% target."; }
-  else if (finalScore != null) { tone = "#e8b84b"; line = "<b>Plateaued at " + finalScore + "%</b> (target " + t + "%) — near the structural ceiling for a local 14B from a text spec. The lever that raises it is a <b>vision model</b> (see + self-correct layout)."; }
+  else if (finalScore != null) {
+    tone = "#e8b84b";
+    const lever = g.scorer === "clone"
+      ? "the lever that raises it is a <b>vision model</b> (see + self-correct the layout)"
+      : "the remaining gaps are the hardest for a local 14B from a text spec — a stronger coder, splitting the goal, or behavioural tests would lift it";
+    line = "<b>Plateaued at " + finalScore + "%</b> (target " + t + "%) — " + lever + ".";
+  }
   else { tone = "#7fd0ff"; line = "<b>Built to the goal.</b> No automatic scorer for this kind of ask — acceptance is by inspection."; }
   return '<div class="tasks" style="margin-top:9px"><div class="tk"><span class="tki" style="border:0;color:' + tone + '">&#9678;</span><span>' + line + (runN ? ' <span class="meta">· logged (run #' + runN + ')</span>' : '') + '</span></div></div>';
+}
+/* ---------- Build-quality scorer (non-clone goals): requirements coverage ---------- */
+// The build is already self-repaired to RUN clean; here we check WHICH of the goal's
+// requirements it actually implements — a strict, model-graded coverage score. This is the
+// scorer that lets Goal mode iterate ANY build toward a bar, not just clones. (The next,
+// harder scorer to add: behavioural testing — drive the page and assert it actually works.)
+async function scoreSpec(goal, app) {
+  const reqs = (goal.evals || []).filter(Boolean);
+  if (!reqs.length || !app) return null;
+  const sys = "You are a STRICT QA reviewer. Given a goal's requirements and the app's HTML, decide which requirements the build ACTUALLY implements (working markup + script), not merely mentions. Output ONLY JSON: {\"missing\":[\"<exact text of each requirement NOT met>\"]}. Return {\"missing\":[]} only if every requirement is genuinely implemented. Be strict.";
+  const prompt = "Requirements:\n" + reqs.map((q, i) => (i + 1) + ". " + q).join("\n") + "\n\nApp (HTML):\n" + String(app).slice(0, 9000);
+  try {
+    const raw = await callModel(() => {}, abortCtl.signal, { model: bestReasoner || bestCoder, system: sys, messages: [{ role: "user", content: prompt }] });
+    const j = parseGoalJSON(raw) || {};
+    const missing = (Array.isArray(j.missing) ? j.missing : []).map(String).filter(Boolean).slice(0, reqs.length);
+    const met = Math.max(0, reqs.length - missing.length);
+    return { score: Math.round(100 * met / reqs.length), met, total: reqs.length, missing };
+  } catch (e) { if (e.name === "AbortError") throw e; return null; }
+}
+function improveSpecPrompt(scov) {
+  const L = ["Your build meets only " + scov.met + " of " + scov.total + " requirements (" + scov.score + "%). Implement these MISSING requirements fully — real, working markup + script:"];
+  scov.missing.forEach(m => L.push("- " + m));
+  L.push("Output the COMPLETE updated HTML file in ONE ```html block. Keep everything that already works; add what's missing.");
+  return L.join("\n");
+}
+// Coverage score card (build goals), mirroring fidelityCard.
+function specCard(sc, from) {
+  const tone = sc.score >= 80 ? "#2ecc71" : sc.score >= 50 ? "#e8b84b" : "#ff7a7a";
+  const trail = (from != null && from !== sc.score) ? ' <span class="meta">(&#8593; from ' + from + '%)</span>' : '';
+  let h = '<div class="tasks" style="margin-top:9px"><div class="tk"><span class="tki" style="border:0;color:' + tone + '">&#9678;</span>'
+    + '<span><b>Requirements coverage: <span style="color:' + tone + '">' + sc.score + '%</span></b>' + trail
+    + ' <span class="meta">' + sc.met + ' / ' + sc.total + ' met</span></span></div>';
+  if (sc.missing && sc.missing.length)
+    h += '<div class="tk tk-queued"><span class="tki"></span><span class="meta">still missing: ' + sc.missing.slice(0, 4).map(m => escapeHtml(String(m).slice(0, 52))).join("; ") + '</span></div>';
+  return h + "</div>";
 }
 /* ---------- Auto-recommend Agent / Goal when the task clearly benefits ---------- */
 // A clone benefits from Goal (a fidelity target + iterate-to-it); a multi-file / backend /
@@ -1102,6 +1145,10 @@ function modeSuggestion(text, auto, agentOn, goalOn) {
   if (agentTask && !auto.cloneUrl && !agentOn) return {
     mode: "agent", title: "🤖 This looks like a multi-file / tooling task",
     body: "<b>Agent mode</b> gives the model real tools — run terminal commands and write files (it asks your approval before each). Turn it on for this?" };
+  // a build with several requirements benefits from Goal's coverage loop (iterate until complete)
+  if (auto.kind === "build" && !auto.cloneUrl && !agentTask && !goalOn && text.length > 45 && /\b(and|with|plus|including|that|then|also)\b/i.test(text)) return {
+    mode: "goal", title: "🎯 This has a few moving parts",
+    body: "<b>Goal mode</b> pins your request as a measurable goal you approve, then builds and <b>iterates until it covers every requirement</b> — not just a first draft. Turn it on?" };
   return null;
 }
 function modeNudge(body, sug) {
@@ -1609,11 +1656,54 @@ async function send() {
             body.innerHTML = planPrefix() + repairHtml + prose + buildTasks(curLines, true, true);
             scrollDown();
           }
-          // generic goal (no auto-scorer): the build IS the deliverable — log it honestly.
+          // build goal: score the build's REQUIREMENTS COVERAGE (strict, model-graded) and
+          // ITERATE toward the target — feed the missing requirements back, rebuild, re-score.
+          // A goal with no checkable requirements falls back to an honest "by inspection" log.
           if (goalActive && !r.cloneUrl) {
-            const runN = await logGoalRun({ kind: "build", capability: goalMeta.capability, metric: goalMeta.metric, autoScored: false, reached: null, evals: goalMeta.evals });
-            body.innerHTML = planPrefix() + repairHtml + prose + buildTasks(curLines, true, true) + goalVerdictCard(goalMeta, false, null, runN);
-            scrollDown();
+            try {
+              let scored = false;
+              if (goalMeta.scorer === "spec") {
+                const TARGET = (goalMeta.metric && +goalMeta.metric.target) || 80, MAX_ROUNDS = 2;
+                let sc = await scoreSpec(goalMeta, sessionApp);
+                const first = sc ? sc.score : null;
+                if (sc) { goalRounds.push({ round: 0, score: sc.score }); body.innerHTML = planPrefix() + repairHtml + prose + buildTasks(curLines, true, true) + specCard(sc); scrollDown(); }
+                let round = 0;
+                while (sc && sc.score < TARGET && sc.missing.length && round < MAX_ROUNDS && sid === currentId) {
+                  round++;
+                  repairHtml = taskList([{ status: "active", label: "Closing the gaps (round " + round + " of " + MAX_ROUNDS + ")", meta: "target " + TARGET + "%" }]);
+                  body.innerHTML = planPrefix() + repairHtml + prose + buildTasks(curLines, true, true) + specCard(sc, first);
+                  showTab("code"); scrollDown();
+                  const facc = await callModel(t => displayStreaming(body, t, sid), abortCtl.signal,
+                    { model: r.model, system: BUILDER_SYSTEM + "\n\nThis improves a build you wrote earlier (shown above). Output the COMPLETE updated HTML file.",
+                      messages: sessionMessages.concat([{ role: "user", content: improveSpecPrompt(sc) }]) });
+                  const fapp = extractApp(facc);
+                  if (!fapp) break;
+                  sessionMessages[sessionMessages.length - 1] = { role: "assistant", content: facc };
+                  curLines = fapp.replace(/\s+$/, "").split("\n").length;
+                  sessionApp = injectDesign(fapp); setApp(fapp); await previewSettled();
+                  const nsc = await scoreSpec(goalMeta, sessionApp);
+                  if (!nsc) break;
+                  const improved = nsc.score > sc.score;
+                  repairHtml = taskList([{ status: improved ? "done" : "fail", label: "Closed gaps (round " + round + ")", meta: sc.score + "% → " + nsc.score + "%" }]);
+                  sc = nsc; goalRounds.push({ round, score: nsc.score });
+                  body.innerHTML = planPrefix() + repairHtml + prose + buildTasks(curLines, true, true) + specCard(sc, first);
+                  scrollDown();
+                  if (!improved) break;
+                }
+                if (sc) {
+                  scored = true;
+                  const reached = sc.score >= TARGET;
+                  const runN = await logGoalRun({ kind: "build", capability: goalMeta.capability, metric: goalMeta.metric, scorer: "spec", target: TARGET, autoScored: true, initial_score: first, final_score: sc.score, rounds: goalRounds, reached: reached, missing: sc.missing });
+                  body.innerHTML = planPrefix() + repairHtml + prose + buildTasks(curLines, true, true) + specCard(sc, first) + goalVerdictCard(goalMeta, reached, sc.score, runN);
+                  scrollDown();
+                }
+              }
+              if (!scored) {   // no checkable requirements (or grading failed) -> honest by-inspection log
+                const runN = await logGoalRun({ kind: "build", capability: goalMeta.capability, metric: goalMeta.metric, autoScored: false, reached: null, evals: goalMeta.evals });
+                body.innerHTML = planPrefix() + repairHtml + prose + buildTasks(curLines, true, true) + goalVerdictCard(goalMeta, false, null, runN);
+                scrollDown();
+              }
+            } catch (e) { if (e.name === "AbortError") throw e; }
           }
           // clone: score the rebuild, then ITERATE toward a fidelity target — feed the
           // gaps back to the coder, rebuild, re-score; stop on target, no-gain, or cap.
