@@ -4,6 +4,16 @@ All notable changes to this project are documented here. Format based on
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/); this project aims to
 follow [Semantic Versioning](https://semver.org/).
 
+## [1.19.1] — 2026-06-22
+
+### Changed
+- **Capabilities no longer pushes a smaller model when you already run a bigger one.** If a higher
+  coder/reasoner tier is installed (e.g. the 14B), the smaller runnable tiers (e.g. 7B) no longer
+  show a prominent **⬇ Install** button — they read **"Optional"** with a one-line explanation
+  ("You already run the 14B (recommended) — this smaller tier isn't needed; it'd just be lighter &
+  faster") and a subtle **Install anyway** link for power users who want a lighter/faster model.
+  Tiers that are a genuine *upgrade* over what's installed keep their Install button.
+
 ## [1.19.0] — 2026-06-22
 
 ### Added
