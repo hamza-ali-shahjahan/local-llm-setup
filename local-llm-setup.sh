@@ -29,7 +29,7 @@
 #   ./local-llm-setup.sh --help
 #
 set -euo pipefail
-VERSION="1.15.1"
+VERSION="1.15.2"
 
 # ----------------------------------------------------------------------------
 # Pretty output (degrades gracefully if the terminal has no color)
@@ -481,7 +481,7 @@ write_chat_html() {
   .tk-queued { color: #5b6472; }
   .tk-queued .tki::before { content: "\25CB"; color: #4d5765; font-size: 12px; }
   .tk-active { color: #cfe3ff; }
-  .tk-active .tki { border: 2px solid #243049; border-top-color: #2b6cff; border-radius: 50%; animation: spin .7s linear infinite; }
+  .tk-active .tki { border: 0; border-radius: 50%; background: conic-gradient(from 0deg, rgba(43,108,255,0) 8%, #2b6cff 100%); -webkit-mask: radial-gradient(closest-side, transparent 58%, #000 60%); mask: radial-gradient(closest-side, transparent 58%, #000 60%); animation: spin .9s linear infinite; }
   .tk-done { color: #b6c0cf; }
   .tk-done .tki::before { content: "\2713"; color: #2ecc71; font-weight: 700; font-size: 13px; }
   .tk-fail .tki::before { content: "\2715"; color: #ff7a7a; font-weight: 700; }
@@ -1878,7 +1878,7 @@ async function renderCaps(){
   const modelRows = tiers.map(t => {
     const installed = hasTier(t.n), can = detected ? eff >= t.need : true;   // undetected -> never a false lock
     return { status: installed?"active":(detected ? (can?"available":"locked") : "available"), name: t.label+(t.star?" ⭐":""),
-      sub: "needs "+t.gb+(detected && !can ? " — your "+eff+" GB can't hold it" : ""),
+      sub: detected ? (can ? "fits your "+eff+" GB" : "needs "+t.gb+" of memory — more than your "+eff+" GB, so it won't run here") : "needs "+t.gb+" of memory",
       act: (!installed && can) ? "the installer auto-picks the right tier for your machine" : "", unlock: t.unlock };
   });
   const visCan = !detected || eff >= 7;
