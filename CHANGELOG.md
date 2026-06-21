@@ -4,6 +4,15 @@ All notable changes to this project are documented here. Format based on
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/); this project aims to
 follow [Semantic Versioning](https://semver.org/).
 
+## [1.13.3] — 2026-06-21
+
+### Fixed
+- **Cleaner fonts when cloning a site.** The inspected font list was polluted with font *sizes*
+  (`18`, `20`, `8.07` — from `--font-size-*` CSS variables), icon fonts (`webflow-icons`,
+  fontawesome…) and CSS keywords (`unset`), and variable-font names came through unloadable
+  (`Geist Variablefont Wght`). Now it's the real, loadable font names (`Geist`, `Source Serif`),
+  so a clone can actually match the original's typography instead of trying to use "18" as a font.
+
 ## [1.13.2] — 2026-06-21
 
 ### Fixed
