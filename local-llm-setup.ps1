@@ -752,6 +752,19 @@ const SPEC_SYSTEM =
   "States: <empty / loading / error / active states that matter>\n" +
   "Style: <one line — modern, clean, shadcn-like; mention accent colour + layout>\n" +
   "Be specific and opinionated so nothing is left ambiguous. Keep it under ~14 lines total. Do not write HTML.";
+// Structured plan: same intent as SPEC_SYSTEM, emitted as JSON so the build works to
+// an explicit, visible feature checklist (Ollama `format` = guided decoding).
+const SPEC_SCHEMA = { type: "object", properties: {
+  title: { type: "string" }, summary: { type: "string" },
+  features: { type: "array", items: { type: "object", properties: {
+    id: { type: "string" }, name: { type: "string" }, detail: { type: "string" } }, required: ["id", "name", "detail"] } },
+  sections: { type: "array", items: { type: "string" } }, style: { type: "string" } },
+  required: ["title", "features"] };
+const SPEC_SYSTEM_JSON =
+  "You are a senior product engineer planning a single-page web app for a fast local coder model. " +
+  "Turn the user's request into a concrete build spec and output ONLY JSON matching the given schema — no prose. " +
+  "Give it a short title, a one-line summary, and 3-6 CONCRETE features (each: a short stable id like 'f1', a name, and a detail naming the exact interaction/behaviour). " +
+  "List the main UI sections top-to-bottom, and one line of style (modern, clean, shadcn-like; name an accent colour). Be specific and opinionated.";
 // Goal Mode's "forge" brain: turn a request into a measurable, REACHABLE goal as JSON,
 // banking the write-a-goal discipline — pin the exact metric + feasibility-check the target.
 const GOAL_SPEC_SYSTEM =
@@ -782,7 +795,7 @@ let messages = [], busy = false, currentModel = "", currentApp = "", stick = tru
 let currentId = newId(), agentReady = false;
 let abortCtl = null;                 // aborts the in-flight generation (Stop button)
 let pendingBuild = null;             // { body, lines } awaiting the preview's load event
-let buildSpec = "", repairHtml = ""; // plan spec + repair status; the prefix is rebuilt live each paint
+let buildSpec = "", buildSpecObj = null, repairHtml = ""; // plan spec (text + structured feature list) + repair status; rebuilt live each paint
 let planOpen = false;                // is the plan card expanded? persisted across streaming repaints
 let goalActive = false, goalTarget = 0, goalMeta = null, goalRounds = [];  // Goal Mode: the agreed goal under pursuit + its per-round scores
 const buildingIds = new Set();       // project ids generating right now -> sidebar status dot
@@ -1054,12 +1067,32 @@ function taskList(items) {
 function planCard(spec, status, modelName) {
   if (status === "active") return taskList([{ status: "active", label: "Planning the build", meta: modelName || "" }]);
   const open = (status === "open" || planOpen) ? " open" : "";
-  return '<details class="plan"' + open + '><summary><span class="tk tk-done"><span class="tki"></span><span>Planned the build</span></span><span class="planhint">view plan</span></summary><div class="planbody">' + render(spec) + '</div></details>';
+  return '<details class="plan"' + open + '><summary><span class="tk tk-done"><span class="tki"></span><span>Planned the build</span></span><span class="planhint">view plan</span></summary><div class="planbody">' + (buildSpecObj ? specCard(buildSpecObj) : render(spec)) + '</div></details>';
 }
 // The build bubble's static prefix — regenerated LIVE each paint (not frozen) so
 // the plan card keeps its open/closed state across streaming repaints.
 function planPrefix() { return buildSpec ? planCard(buildSpec, "done") : ""; }
 function streamPrefix() { return planPrefix() + repairHtml; }
+// A structured build spec rendered as a feature checklist (the visible plan), and the
+// same spec flattened to the explicit text the coder builds to.
+function specToText(s) {
+  return "Title: " + s.title + (s.summary ? "\nSummary: " + s.summary : "") +
+    "\nFeatures (implement EVERY one):\n" + (s.features || []).map(f => "- [" + f.id + "] " + f.name + ": " + f.detail).join("\n") +
+    (s.sections && s.sections.length ? "\nSections (top to bottom): " + s.sections.join(", ") : "") +
+    (s.style ? "\nStyle: " + s.style : "");
+}
+function specCard(s) {
+  let h = '<div class="goal"><h4>&#128221; ' + escapeHtml(s.title || "Build plan") + '</h4>';
+  if (s.summary) h += '<div class="cap">' + escapeHtml(s.summary) + '</div>';
+  h += '<div class="tasks" style="margin-top:4px">';
+  (s.features || []).forEach(f => {
+    h += '<div class="tk' + (f.done ? " tk-done" : " tk-queued") + '"><span class="tki"></span>'
+      + '<span><b>' + escapeHtml(f.name) + '</b>' + (f.detail ? ' <span class="meta">— ' + escapeHtml(f.detail) + '</span>' : "") + '</span></div>';
+  });
+  h += '</div>';
+  if (s.style) h += '<div class="verdict">' + escapeHtml(s.style) + '</div>';
+  return h + '</div>';
+}
 // The two honest phases of an app build. Tense follows reality: "Writing…" while
 // the code streams, "Wrote" once the fence closes; "Rendering…" until the iframe
 // actually loads, only then "Rendered". The status — not the prose — is the truth.
@@ -1652,6 +1685,20 @@ async function callModel(onTok, signal, opts) {
   return acc;
 }
 
+// Non-streaming, schema-constrained call (Ollama `format` = guided decoding): returns
+// parsed JSON guaranteed to match `schema`, or throws. Forges the structured build
+// spec so a small model can't drift off-shape.
+async function callStructured(system, userText, schema, opts) {
+  opts = opts || {};
+  const model = opts.model || bestReasoner || currentModel;
+  const resp = await fetch(API + "/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, signal: opts.signal,
+    body: JSON.stringify({ model, stream: false, format: schema,
+      messages: [{ role: "system", content: system }, { role: "user", content: userText }],
+      options: { temperature: 0, ...(opts.num_ctx ? { num_ctx: opts.num_ctx } : {}) } }) });
+  const o = await resp.json();
+  return JSON.parse((o.message && o.message.content) || "null");
+}
+
 function setBusy(on) {
   busy = on;
   sendBtn.textContent = on ? "Stop" : "Send";
@@ -1675,7 +1722,7 @@ async function send() {
   buildingIds.add(sid); renderList();
   addMsg("user", text); sessionMessages.push({ role: "user", content: text });
   abortCtl = new AbortController();
-  buildSpec = ""; repairHtml = ""; buildingApp = false; _lastPaint = 0; planOpen = false;
+  buildSpec = ""; buildSpecObj = null; repairHtml = ""; buildingApp = false; _lastPaint = 0; planOpen = false;
   goalActive = false; goalTarget = 0; goalMeta = null; goalRounds = [];
   let body = null;
   let goalSpec = "";                                              // a forged build spec for a non-clone goal
@@ -1767,15 +1814,22 @@ async function send() {
           }
         } catch (e) { if (e.name === "AbortError") throw e; }
       }
-      // L1 — plan first: the reasoner turns a short ask into a concrete spec the coder builds to
+      // L1 — plan first: forge a STRUCTURED feature checklist (guided decoding) the
+      // coder builds to; fall back to the free-text spec if the structured call fails.
       if (r.plan && bestReasoner && !spec) {
         body = addMsg("assistant", "");
         body.innerHTML = planCard("", "active", bestReasoner);
         if (sid === currentId) showTab("code");
-        const planText = await callModel(() => {}, abortCtl.signal,
-          { model: bestReasoner, system: SPEC_SYSTEM, messages: [{ role: "user", content: text }] });
-        spec = stripThink(planText).trim();
-        buildSpec = spec;
+        buildSpecObj = null;
+        try {
+          const so = await callStructured(SPEC_SYSTEM_JSON, text, SPEC_SCHEMA, { model: bestReasoner, signal: abortCtl.signal });
+          if (so && so.features && so.features.length) { buildSpecObj = so; spec = specToText(so); buildSpec = spec; }
+        } catch (e) { if (e.name === "AbortError") throw e; }
+        if (!buildSpecObj) {
+          const planText = await callModel(() => {}, abortCtl.signal,
+            { model: bestReasoner, system: SPEC_SYSTEM, messages: [{ role: "user", content: text }] });
+          spec = stripThink(planText).trim(); buildSpec = spec;
+        }
         body.innerHTML = streamPrefix() + buildTasks(0, false, false);
         scrollDown();
       }
@@ -1992,7 +2046,7 @@ async function send() {
     if (e.name === "AbortError") { if (body) body.innerHTML = '<div class="codecard">Stopped.</div>'; else addMsg("assistant", "Stopped."); }
     else { if (body) body.innerHTML = '<div class="codecard">Error: ' + escapeHtml(e.message) + '</div>'; else addMsg("assistant", "Error: " + e.message); }
   } finally {
-    abortCtl = null; setBusy(false); buildSpec = ""; repairHtml = "";
+    abortCtl = null; setBusy(false); buildSpec = ""; buildSpecObj = null; repairHtml = "";
     buildingIds.delete(sid);
     persistSession(sid, sessionMessages, sessionApp, sid === currentId ? captureTranscript() : null);
     if (sid === currentId) input.focus();
