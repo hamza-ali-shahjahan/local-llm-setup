@@ -1100,7 +1100,7 @@ function taskList(items) {
 function planCard(spec, status, modelName) {
   if (status === "active") return taskList([{ status: "active", label: "Planning the build", meta: modelName || "" }]);
   const open = (status === "open" || planOpen) ? " open" : "";
-  return '<details class="plan"' + open + '><summary><span class="tk tk-done"><span class="tki"></span><span>Planned the build</span></span><span class="planhint">view plan</span></summary><div class="planbody">' + (buildSpecObj ? specCard(buildSpecObj) : render(spec)) + '</div></details>';
+  return '<details class="plan"' + open + '><summary><span class="tk tk-done"><span class="tki"></span><span>Planned the build</span></span><span class="planhint">view plan</span></summary><div class="planbody">' + (buildSpecObj ? planSpecCard(buildSpecObj) : render(spec)) + '</div></details>';
 }
 // The build bubble's static prefix — regenerated LIVE each paint (not frozen) so
 // the plan card keeps its open/closed state across streaming repaints.
@@ -1114,7 +1114,7 @@ function specToText(s) {
     (s.sections && s.sections.length ? "\nSections (top to bottom): " + s.sections.join(", ") : "") +
     (s.style ? "\nStyle: " + s.style : "");
 }
-function specCard(s) {
+function planSpecCard(s) {
   let h = '<div class="goal"><h4>&#128221; ' + escapeHtml(s.title || "Build plan") + '</h4>';
   if (s.summary) h += '<div class="cap">' + escapeHtml(s.summary) + '</div>';
   h += '<div class="tasks" style="margin-top:4px">';
