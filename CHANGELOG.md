@@ -4,6 +4,18 @@ All notable changes to this project are documented here. Format based on
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/); this project aims to
 follow [Semantic Versioning](https://semver.org/).
 
+## [1.20.0] — 2026-06-23
+
+### Added
+- **The build now plans to a structured feature checklist (guided decoding).** Instead of a
+  vague free-text plan, the reasoner forges the spec as **JSON constrained to a schema**
+  (Ollama `format`) — a title, summary, and 3–6 concrete features (each with an id, name, and the
+  exact behaviour). That checklist is shown as a card *and* fed to the coder as explicit
+  must-implement requirements, so it builds to a concrete contract instead of guessing. Falls back
+  to the previous free-text plan automatically if the structured call ever fails (no regression).
+  This is step 1 of the incremental, context-aware build loop — the foundation for building and
+  verifying feature-by-feature next.
+
 ## [1.19.1] — 2026-06-22
 
 ### Changed
