@@ -45,7 +45,7 @@ param(
   [switch]$Help
 )
 
-$AppVersion = '1.20.0'   # NB: not $Version — that name is the -Version switch param
+$AppVersion = '1.21.0'   # NB: not $Version — that name is the -Version switch param
 $Ctx = 8192             # default context window — big enough for real work, light on RAM
 $HomeDir = if ($env:USERPROFILE) { $env:USERPROFILE } else { $HOME }
 $ChatDir = Join-Path $HomeDir '.local-llm-setup\chat'   # where the chat page is written
@@ -750,6 +750,7 @@ const AGENT_SYSTEM =
   "<write path=\"rel/path\">\nfile contents\n</write>  — write a workspace file\n" +
   "<read path=\"rel/path\">  — read a workspace file\n" +
   "<fetch url=\"https://...\">  — fetch a public web page's raw HTML\n" +
+  "<search query=\"...\">  — search the web (keyless, via DuckDuckGo) for pages, docs or facts; returns the top results as title + URL + snippet, so you can then <fetch> or <inspect> the most relevant URL\n" +
   "<inspect url=\"https://...\">  — a STRUCTURED digest of a page. When a headless browser is present it RENDERS the page (so JavaScript-built sites read correctly), returning title, sections, headings, links, images, the real computed colour palette + fonts, the type scale / radii / shadows, the motion (CSS @keyframes + animations + transitions), hover states, responsive breakpoints and a framework guess\n" +
   "<extract url=\"https://...\">  — a page's design tokens (palette, fonts, type scale, radii, shadows, spacing) plus its motion and framework\n" +
   "<screenshot url=\"https://...\">  — render a page in a headless browser (Playwright's managed Chromium, installed on demand) and capture a PNG\n" +
@@ -1562,7 +1563,7 @@ el("newBtn").addEventListener("click", newChat);
 el("sbToggle").addEventListener("click", () => sidebar.classList.toggle("collapsed"));
 
 /* ---------- agent tools ---------- */
-const READONLY_TOOLS = ["read", "fetch", "inspect", "extract", "screenshot"];
+const READONLY_TOOLS = ["read", "fetch", "search", "inspect", "extract", "screenshot"];
 function findToolCall(text) {
   const run = text.match(/<run>([\s\S]*?)<\/run>/i);
   if (run) return { kind: "run", cmd: run[1].trim() };
@@ -1572,6 +1573,8 @@ function findToolCall(text) {
   if (rd) return { kind: "read", path: rd[1].trim() };
   const fe = text.match(/<fetch\s+url="([^"]+)"\s*\/?>/i);
   if (fe) return { kind: "fetch", url: fe[1].trim() };
+  const se = text.match(/<search\s+query="([^"]+)"\s*\/?>/i);
+  if (se) return { kind: "search", query: se[1].trim() };
   const ins = text.match(/<inspect\s+url="([^"]+)"\s*\/?>/i);
   if (ins) return { kind: "inspect", url: ins[1].trim() };
   const ex = text.match(/<extract\s+url="([^"]+)"\s*\/?>/i);
@@ -1634,8 +1637,8 @@ async function runTool(tool) {
     return out;
   } else {
     // read-only tools: read | fetch | inspect | extract
-    const label = tool.kind === "read" ? tool.path : tool.url;
-    const payload = tool.kind === "read" ? { path: tool.path } : { url: tool.url };
+    const label = tool.kind === "read" ? tool.path : tool.kind === "search" ? tool.query : tool.url;
+    const payload = tool.kind === "read" ? { path: tool.path } : tool.kind === "search" ? { query: tool.query } : { url: tool.url };
     term('<span class="cmd">[' + tool.kind + '] ' + escapeHtml(label) + '</span>\n'); showTab("term");
     const r = await fetch(AGENT_URL + "/api/agent/" + tool.kind, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
     const j = await r.json();
@@ -1643,6 +1646,7 @@ async function runTool(tool) {
     let out;
     if (tool.kind === "read") out = j.content || "(empty)";
     else if (tool.kind === "fetch") out = "Fetched " + j.url + " — status " + j.status + (j.truncated ? " (truncated)" : "") + "\n\n" + j.html;
+    else if (tool.kind === "search") out = (j.count || 0) + " results for “" + (j.query || "") + "” (" + (j.provider || "web") + "):\n\n" + (j.results || []).map((x, i) => (i + 1) + ". " + x.title + "\n   " + x.url + (x.snippet ? "\n   " + x.snippet : "")).join("\n\n");
     else if (tool.kind === "screenshot") {
       if (j.dataurl) { termview.classList.remove("hidden"); termview.insertAdjacentHTML("beforeend", '<img src="' + j.dataurl + '" style="max-width:100%;border:1px solid #1e2430;border-radius:8px;margin:4px 0">'); termview.scrollTop = termview.scrollHeight; }
       out = "screenshot saved to workspace/" + (j.path || "shots") + " (" + (j.bytes || 0) + " bytes)";   // model can't see images; gets the path
@@ -2486,7 +2490,7 @@ function Write-AgentServer {
 import json, os, re, socket, ipaddress, subprocess, base64, shutil, tempfile, struct, glob, sys, time, platform, math, sqlite3, urllib.request, urllib.error
 from collections import Counter
 from html.parser import HTMLParser
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import urljoin, urlsplit, parse_qs, urlencode
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 HOST, PORT = "127.0.0.1", int(os.environ.get("LLM_AGENT_PORT", "8765"))
@@ -2538,6 +2542,89 @@ def fetch(url):
         final, status = r.geturl(), getattr(r, "status", 200)
     return {"final_url": final, "status": status,
             "html": raw[:FETCH_CAP].decode("utf-8", "replace"), "truncated": len(raw) > FETCH_CAP}
+
+# ---------- web search (stdlib only, keyless) ----------
+# Search the open web with NO API key. Default provider is DuckDuckGo's HTML endpoint
+# (the keyless one search libraries use); set LLM_SEARCH_URL to a self-hosted SearXNG
+# JSON endpoint (".../search") to keep search on your own box too. Like fetch/inspect
+# this needs network for the query itself — but never a cloud key.
+SEARCH_URL = os.environ.get("LLM_SEARCH_URL", "").strip()   # optional SearXNG (".../search")
+SEARCH_CAP = 800_000
+# A browser User-Agent for the search request only — search front-ends reject non-browser
+# agents far more aggressively than ordinary pages do.
+SEARCH_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+             "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+
+def _ddg_real_url(href):
+    """DuckDuckGo wraps every result in a redirect (//duckduckgo.com/l/?uddg=<real-url>).
+    Decode it back to the real destination so the model gets a URL it can <fetch>."""
+    href = (href or "").strip()
+    if href.startswith("//"): href = "https:" + href
+    try:
+        uddg = parse_qs(urlsplit(href).query).get("uddg")
+        if uddg: return uddg[0]
+    except Exception:
+        pass
+    return href
+
+class _DDGResults(HTMLParser):
+    """Pull {title, url, snippet} out of DuckDuckGo's HTML results page."""
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.results = []; self._title = None; self._href = ""; self._snip = None; self._snip_tag = ""
+    def handle_starttag(self, tag, attrs):
+        cls = dict(attrs).get("class", "") or ""
+        if tag == "a" and "result__a" in cls:
+            self._title = []; self._href = dict(attrs).get("href", "")
+        elif "result__snippet" in cls:
+            self._snip = []; self._snip_tag = tag
+    def handle_endtag(self, tag):
+        if tag == "a" and self._title is not None:
+            self.results.append({"title": "".join(self._title).strip()[:160],
+                                 "url": _ddg_real_url(self._href), "snippet": ""})
+            self._title = None
+        elif self._snip is not None and tag == self._snip_tag:
+            if self.results and not self.results[-1]["snippet"]:
+                self.results[-1]["snippet"] = "".join(self._snip).strip()[:300]
+            self._snip = None
+    def handle_data(self, data):
+        if self._title is not None: self._title.append(data)
+        if self._snip is not None: self._snip.append(data)
+
+def _parse_ddg(html, k=6):
+    p = _DDGResults(); p.feed(html or "")
+    out = [r for r in p.results if r["title"] and r["url"].startswith("http")]
+    return out[:max(1, k)]
+
+def _parse_searxng(data, k=6):
+    out = [{"title": (x.get("title") or "")[:160], "url": x.get("url") or "",
+            "snippet": (x.get("content") or "")[:300]}
+           for x in ((data or {}).get("results") or []) if x.get("url")]
+    return out[:max(1, k)]
+
+def web_search(query, k=6):
+    """Top web results for `query` as [{title, url, snippet}] — keyless. Uses a
+    self-hosted SearXNG (LLM_SEARCH_URL) when set, else DuckDuckGo's HTML endpoint."""
+    q = (query or "").strip()
+    if not q:
+        raise ValueError("empty search query")
+    k = max(1, min(int(k or 6), 12))
+    if SEARCH_URL:
+        sep = "&" if "?" in SEARCH_URL else "?"
+        u = SEARCH_URL + sep + urlencode({"q": q, "format": "json"})
+        req = urllib.request.Request(u, headers={"User-Agent": SEARCH_UA, "Accept": "application/json"})
+        with _OPENER.open(req, timeout=FETCH_TIMEOUT) as r:
+            data = json.loads(r.read(SEARCH_CAP) or b"{}")
+        res = _parse_searxng(data, k)
+        return {"query": q, "provider": "searxng", "results": res, "count": len(res)}
+    req = urllib.request.Request("https://html.duckduckgo.com/html/",
+                                 data=urlencode({"q": q, "kl": "us-en"}).encode(),
+                                 headers={"User-Agent": SEARCH_UA, "Accept": "text/html,*/*",
+                                          "Content-Type": "application/x-www-form-urlencoded"})
+    with _OPENER.open(req, timeout=FETCH_TIMEOUT) as r:
+        html = r.read(SEARCH_CAP).decode("utf-8", "replace")
+    res = _parse_ddg(html, k)
+    return {"query": q, "provider": "duckduckgo", "results": res, "count": len(res)}
 
 # ---------- html digest (stdlib only) ----------
 _COLOR_RE = re.compile(r'#[0-9a-fA-F]{3,8}\b|rgba?\([^)]*\)|hsla?\([^)]*\)')
@@ -3746,7 +3833,7 @@ class H(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path.startswith("/api/agent/ping"):
             return self._json(200, {"ok": True, "workspace": WORKSPACE,
-                                    "tools": ["run", "write", "read", "fetch", "inspect", "extract", "score", "screenshot", "gitsync", "goallog", "visioncritique", "rag"],
+                                    "tools": ["run", "write", "read", "fetch", "search", "inspect", "extract", "score", "screenshot", "gitsync", "goallog", "visioncritique", "rag"],
                                     "goal_runs": GOAL_LOG,
                                     "vision": vision_model(),
                                     "rag": rag_status(),
@@ -3803,6 +3890,12 @@ class H(BaseHTTPRequestHandler):
                 f = fetch((req.get("url") or "").strip())
                 return self._json(200, {"ok": True, "url": f["final_url"], "status": f["status"],
                                         "html": f["html"][:12000], "truncated": f["truncated"] or len(f["html"]) > 12000})
+            except Exception as e:
+                return self._json(200, {"ok": False, "error": str(e)})
+        if path.startswith("/api/agent/search"):
+            try:
+                return self._json(200, {"ok": True, **web_search((req.get("query") or req.get("q") or "").strip(),
+                                                                  k=int(req.get("k", 6)))})
             except Exception as e:
                 return self._json(200, {"ok": False, "error": str(e)})
         if path.startswith("/api/agent/inspect"):
@@ -3899,7 +3992,7 @@ class H(BaseHTTPRequestHandler):
 if __name__ == "__main__":
     print(f"Local LLM agent server -> http://{HOST}:{PORT}   (workspace: {WORKSPACE})")
     _be = "playwright (managed Chromium)" if _have_playwright() else ("chrome subprocess" if find_browser() else None)
-    print("  tools: run, write, read, fetch, inspect, extract, score, screenshot, gitsync, goallog, rag"
+    print("  tools: run, write, read, fetch, search, inspect, extract, score, screenshot, gitsync, goallog, rag"
           + (f"  [screenshots: {_be}]" if _be else "  [screenshots: install Playwright or Chrome to enable]"))
     _rs = rag_status()
     print("  visual-rag: " + ("ready (embed: %s, vision: %s)" % (_rs["embed_model"], _rs["vision_model"])

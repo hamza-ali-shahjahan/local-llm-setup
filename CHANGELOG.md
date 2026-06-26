@@ -4,6 +4,21 @@ All notable changes to this project are documented here. Format based on
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/); this project aims to
 follow [Semantic Versioning](https://semver.org/).
 
+## [1.21.0] — 2026-06-26
+
+### Added
+- **🔎 Keyless web search in the builder.** Agent mode gains a new `<search query="…">` tool: the
+  builder can search the **live web with no API key**, getting back the top results as title + URL +
+  snippet so it can then `<fetch>`/`<inspect>` the most relevant page — closing the loop from "I don't
+  know" to "let me look it up." Default provider is DuckDuckGo's HTML endpoint (its redirect links are
+  decoded back to the real destination); point `LLM_SEARCH_URL` at a self-hosted
+  [SearXNG](https://github.com/searxng/searxng) JSON endpoint and search never leaves your network
+  either. Stdlib-only (no extra deps), SSRF-guarded redirects, capped responses. Wired through
+  `/api/agent/search`, the model's tool list, the read-only allowlist (it only reads, so no approval
+  prompt), and advertised in `/api/agent/ping`; covered by `tests/test_web_search.py` (offline parser
+  tests against a fixture + a gated live round-trip). Turns the **Web search ❌ → ✅** row in the
+  README's honest comparison table.
+
 ## [1.20.0] — 2026-06-22
 
 ### Added
