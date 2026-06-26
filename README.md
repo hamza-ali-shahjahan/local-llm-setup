@@ -323,7 +323,7 @@ What you trade that gap *for*: it runs entirely on your machine, costs nothing, 
 | **Goal-driven build** — forge → agree → pursue → log | ✅ 🎯 | ⚠️ | ❌ |
 | Screenshot a page | ✅ | ✅ | ✅ |
 | Visual / fidelity self-check | ⚠️ | ✅ | ✅ |
-| Web search | ❌ | ✅ | ⚠️ |
+| **Web search** | ✅ <sup>‡</sup> | ✅ | ⚠️ |
 | Image generation | ❌ | ⚠️ | ✅ |
 | Multi-file projects | ❌ | ✅ | ✅ |
 | Backend / database / auth | ❌ | ⚠️ | ✅ |
@@ -332,11 +332,13 @@ What you trade that gap *for*: it runs entirely on your machine, costs nothing, 
 
 <sub>✅ have it · ⚠️ partial, best-effort, or a different approach · ❌ not yet — building toward it</sub>
 
-**Where we're behind, and committed to closing:** multi-file projects, web search, image generation, a backend/database, and one-click deploy. One honest caveat on the remaining ⚠️:
+**Where we're behind, and committed to closing:** multi-file projects, image generation, a backend/database, and one-click deploy. One honest caveat on the remaining ⚠️:
 
 - **Visual check is _structural_, not pixel-perfect.** We score a clone's palette, fonts and sections against the real page — local coder models aren't vision-capable yet, so we measure the design tokens rather than "looking" at the screenshot. It's the more *actionable* signal for a code model, but it isn't the same thing.
 
 <sub>**†&nbsp;Git sync is local-only.** We initialise a real git repo, write a sensible `.gitignore`, commit, and export a `.zip` that includes the full `.git` history. **Pushing to a remote (e.g. GitHub) is not automated** — that needs your own credentials, so the tool prints the exact `git push` command for you to run rather than running it for you. Screenshots are Playwright-backed (managed Chromium) with a system-Chrome fallback.</sub>
+
+<sub>**‡&nbsp;Web search is keyless.** In agent mode the builder can `<search>` the live web with **no API key** — by default via DuckDuckGo's HTML endpoint, returning the top results as title + URL + snippet so the model can then `<fetch>`/`<inspect>` the most relevant page. Want it fully on your own box too? Point `LLM_SEARCH_URL` at a self-hosted [SearXNG](https://github.com/searxng/searxng) and search never leaves your network either. Like fetching a page, the query itself needs a connection — but never a cloud key.</sub>
 
 The roadmap toward parity lives in [`docs/PRD-local-builder-v2-tools-and-goals.md`](docs/PRD-local-builder-v2-tools-and-goals.md). **Issues and PRs that turn a ❌ into a ✅ are exactly what this project is for.**
 
