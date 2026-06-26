@@ -6,6 +6,8 @@
 
 **Zero to a running local LLM — in one command.**
 
+<sub>… then build whole apps from a chat box — clone any site, search the web, ask your own docs by sight — **all 100% on your machine. No API keys, ever.**</sub>
+
 <sub>macOS&nbsp; · &nbsp;Linux&nbsp; · &nbsp;Windows&nbsp; · &nbsp;no prior knowledge required</sub>
 
 <br>
@@ -278,7 +280,7 @@ Running the model is only half of "useful". When setup finishes it **offers to s
 
 Ask it to *"build me a stopwatch"* and it renders + runs in a sandboxed iframe (with a **Code** tab + **Download**). It works with **any code-writing model** — a builder prompt makes the model emit one self-contained HTML file. Also: a **history sidebar** (past builds) and Claude-Code-style scroll (scroll up mid-generation without getting yanked down). Served from `localhost`, which Ollama allows by default, so the page can reach your model but Ollama is **not** exposed to the web.
 
-Under the hood it works like the tools that inspired it: it **picks the right model for each request** (⚡ Auto — a coder to build, a reasoner to explain), **plans before it builds**, **fixes its own runtime errors**, shows the work as **traceable tasks** (not raw code scrolling past), and keeps each chat as its own isolated project. With **agent mode** on it can also **clone a real website** — inspect its live palette, fonts and layout, rebuild it, then **score** how close the result is. See [how that compares to Claude Code and Lovable](#how-we-compare--and-where-were-honestly-behind) below.
+Under the hood it works like the tools that inspired it: it **picks the right model for each request** (⚡ Auto — a coder to build, a reasoner to explain), **plans before it builds**, **fixes its own runtime errors**, shows the work as **traceable tasks** (not raw code scrolling past), and keeps each chat as its own isolated project. With **agent mode** on it can also **clone a real website** — inspect its live palette, fonts and layout, rebuild it, then **score** how close the result is — and **search the web** (keyless, no API key) when it needs a fact, doc or reference. See [how that compares to Claude Code and Lovable](#how-we-compare--and-where-were-honestly-behind) below.
 
 With **🎯 Goal Mode** on, it goes a step further: it **forges a measurable goal** from your ask (an exact metric + target, numeric evals, a feasibility check), **waits for you to Agree**, then **pursues** it — building, scoring and iterating toward the target — and reports an **honest verdict** (reached, or the ceiling it hit and the lever that would raise it), logging what it learns to `~/.local-llm-setup/goal_runs.jsonl`. It never fakes a number — goals with no automatic scorer are flagged *by inspection* and just build.
 
@@ -322,7 +324,7 @@ What you trade that gap *for*: it runs entirely on your machine, costs nothing, 
 | Auto-pick the model per request | ✅ ⚡ | ❌ | ❌ |
 | **Goal-driven build** — forge → agree → pursue → log | ✅ 🎯 | ⚠️ | ❌ |
 | Screenshot a page | ✅ | ✅ | ✅ |
-| Visual / fidelity self-check | ⚠️ | ✅ | ✅ |
+| Visual / fidelity self-check | ✅ <sup>§</sup> | ✅ | ✅ |
 | **Web search** | ✅ <sup>‡</sup> | ✅ | ⚠️ |
 | Image generation | ❌ | ⚠️ | ✅ |
 | Multi-file projects | ❌ | ✅ | ✅ |
@@ -332,13 +334,15 @@ What you trade that gap *for*: it runs entirely on your machine, costs nothing, 
 
 <sub>✅ have it · ⚠️ partial, best-effort, or a different approach · ❌ not yet — building toward it</sub>
 
-**Where we're behind, and committed to closing:** multi-file projects, image generation, a backend/database, and one-click deploy. One honest caveat on the remaining ⚠️:
+**Where we're behind, and committed to closing:** multi-file projects, image generation, a backend/database, and one-click deploy. And one honest note on how the visual self-check works:
 
-- **Visual check is _structural_, not pixel-perfect.** We score a clone's palette, fonts and sections against the real page — local coder models aren't vision-capable yet, so we measure the design tokens rather than "looking" at the screenshot. It's the more *actionable* signal for a code model, but it isn't the same thing.
+- **The visual self-check has two tiers.** The always-on score is _structural_ — palette, fonts, sections and design tokens vs the real page, the most *actionable* signal for a code model. Install the optional local **vision model** and clones also get a real **visual** pass: it screenshots your clone beside the original, scores how visually close it is (0–100) and names concrete gaps that drive the next fix. It's a local 7B — meaningfully closer, honestly not pixel-perfect parity.
 
 <sub>**†&nbsp;Git sync is local-only.** We initialise a real git repo, write a sensible `.gitignore`, commit, and export a `.zip` that includes the full `.git` history. **Pushing to a remote (e.g. GitHub) is not automated** — that needs your own credentials, so the tool prints the exact `git push` command for you to run rather than running it for you. Screenshots are Playwright-backed (managed Chromium) with a system-Chrome fallback.</sub>
 
 <sub>**‡&nbsp;Web search is keyless.** In agent mode the builder can `<search>` the live web with **no API key** — by default via DuckDuckGo's HTML endpoint, returning the top results as title + URL + snippet so the model can then `<fetch>`/`<inspect>` the most relevant page. Want it fully on your own box too? Point `LLM_SEARCH_URL` at a self-hosted [SearXNG](https://github.com/searxng/searxng) and search never leaves your network either. Like fetching a page, the query itself needs a connection — but never a cloud key.</sub>
+
+<sub>**§&nbsp;Visual self-check is two-tier.** Structural token-scoring runs always; a real **visual** pass (screenshot the clone beside the original → a visual-closeness score 0–100 + a concrete gap list → drives the next fix) turns on when you install the optional local vision model (`qwen2.5vl:7b`, one click in 🧩 Capabilities). It's a local 7B — meaningfully closer, not pixel-perfect. See [docs/vision-model.md](docs/vision-model.md).</sub>
 
 The roadmap toward parity lives in [`docs/PRD-local-builder-v2-tools-and-goals.md`](docs/PRD-local-builder-v2-tools-and-goals.md). **Issues and PRs that turn a ❌ into a ✅ are exactly what this project is for.**
 
@@ -366,6 +370,12 @@ By default the builder clones a page *structurally* (palette, fonts, sections, c
 - **Cost:** ~6 GB disk, ~24 GB RAM to run alongside the coder (it swaps models per round, so clones get slower). It's a local 7B model — meaningfully closer, not pixel-perfect.
 
 Full details, requirements, and the implementation gotchas (the Ollama context-window trap especially): **[docs/vision-model.md](docs/vision-model.md)**.
+
+## Ask your own docs by sight — 📚 Visual RAG (optional)
+
+Add a page by URL or drop in an image (a slide, a chart, a scanned page) and the builder **screenshots it, has the local vision model describe what it *looks like*, embeds that, and indexes it.** Then ask a question and it retrieves the most visually-relevant pages and answers from their **pixels** — so the tables, charts and layout that plain text extraction throws away stay searchable.
+
+Fully local and dependency-free: `qwen2.5vl` + `nomic-embed-text` via Ollama, a stdlib SQLite store and pure-Python cosine — no PyTorch, FAISS or numpy. Open **📚 Knowledge** in the builder (it lights up once the vision + embedding models are installed — one click each in **🧩 Capabilities**). Inspired by [PixelRAG](https://github.com/StarTrail-org/PixelRAG), kept on the one-command stack.
 
 ## Requirements
 
