@@ -278,7 +278,7 @@ Running the model is only half of "useful". When setup finishes it **offers to s
 ./local-llm-setup.sh --chat          # -Chat on Windows
 ```
 
-Ask it to *"build me a stopwatch"* and it renders + runs in a sandboxed iframe (with a **Code** tab + **Download**). It works with **any code-writing model** — a builder prompt makes the model emit one self-contained HTML file. Also: a **history sidebar** (past builds) and Claude-Code-style scroll (scroll up mid-generation without getting yanked down). Served from `localhost`, which Ollama allows by default, so the page can reach your model but Ollama is **not** exposed to the web.
+Ask it to *"build me a stopwatch"* and it renders + runs in a sandboxed iframe (with a **Code** tab, **Download**, and **🚀 Deploy** — one click serves it on a real local URL in its own tab, no cloud). It works with **any code-writing model** — a builder prompt makes the model emit one self-contained HTML file. Also: a **history sidebar** (past builds) and Claude-Code-style scroll (scroll up mid-generation without getting yanked down). Served from `localhost`, which Ollama allows by default, so the page can reach your model but Ollama is **not** exposed to the web.
 
 Under the hood it works like the tools that inspired it: it **picks the right model for each request** (⚡ Auto — a coder to build, a reasoner to explain), **plans before it builds**, **fixes its own runtime errors**, shows the work as **traceable tasks** (not raw code scrolling past), and keeps each chat as its own isolated project. With **agent mode** on it can also **clone a real website** — inspect its live palette, fonts and layout, rebuild it, then **score** how close the result is — and **search the web** (keyless, no API key) when it needs a fact, doc or reference. See [how that compares to Claude Code and Lovable](#how-we-compare--and-where-were-honestly-behind) below.
 
@@ -329,12 +329,12 @@ What you trade that gap *for*: it runs entirely on your machine, costs nothing, 
 | Image generation | ❌ | ⚠️ | ✅ |
 | Multi-file projects | ❌ | ✅ | ✅ |
 | Backend / database / auth | ❌ | ⚠️ | ✅ |
-| One-click deploy | ❌ | ✅ | ✅ |
+| **One-click deploy** | ✅ <sup>¶</sup> | ✅ | ✅ |
 | Git / repo sync | ✅ <sup>†</sup> | ✅ | ✅ |
 
 <sub>✅ have it · ⚠️ partial, best-effort, or a different approach · ❌ not yet — building toward it</sub>
 
-**Where we're behind, and committed to closing:** multi-file projects, image generation, a backend/database, and one-click deploy. And one honest note on how the visual self-check works:
+**Where we're behind, and committed to closing:** multi-file projects, image generation, and a backend/database. And one honest note on how the visual self-check works:
 
 - **The visual self-check has two tiers.** The always-on score is _structural_ — palette, fonts, sections and design tokens vs the real page, the most *actionable* signal for a code model. Install the optional local **vision model** and clones also get a real **visual** pass: it screenshots your clone beside the original, scores how visually close it is (0–100) and names concrete gaps that drive the next fix. It's a local 7B — meaningfully closer, honestly not pixel-perfect parity.
 
@@ -343,6 +343,8 @@ What you trade that gap *for*: it runs entirely on your machine, costs nothing, 
 <sub>**‡&nbsp;Web search is keyless.** In agent mode the builder can `<search>` the live web with **no API key** — by default via DuckDuckGo's HTML endpoint, returning the top results as title + URL + snippet so the model can then `<fetch>`/`<inspect>` the most relevant page. Want it fully on your own box too? Point `LLM_SEARCH_URL` at a self-hosted [SearXNG](https://github.com/searxng/searxng) and search never leaves your network either. Like fetching a page, the query itself needs a connection — but never a cloud key.</sub>
 
 <sub>**§&nbsp;Visual self-check is two-tier.** Structural token-scoring runs always; a real **visual** pass (screenshot the clone beside the original → a visual-closeness score 0–100 + a concrete gap list → drives the next fix) turns on when you install the optional local vision model (`qwen2.5vl:7b`, one click in 🧩 Capabilities). It's a local 7B — meaningfully closer, not pixel-perfect. See [docs/vision-model.md](docs/vision-model.md).</sub>
+
+<sub>**¶&nbsp;Deploy is local-first.** One click serves your built app on a real `http://` URL on your machine — a standalone page in its own browser tab (a real origin, so relative paths, `fetch` and service workers work) that **keeps running after you close the builder**. Localhost by default; opt into `0.0.0.0` to reach it from your phone on the same Wi-Fi. A public cloud URL still needs your own host — by design we never ship cloud keys, so the keyless, private local URL is the finish line.</sub>
 
 The roadmap toward parity lives in [`docs/PRD-local-builder-v2-tools-and-goals.md`](docs/PRD-local-builder-v2-tools-and-goals.md). **Issues and PRs that turn a ❌ into a ✅ are exactly what this project is for.**
 
