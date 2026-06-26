@@ -29,7 +29,7 @@
 #   ./local-llm-setup.sh --help
 #
 set -euo pipefail
-VERSION="1.24.1"
+VERSION="1.25.0"
 
 # ----------------------------------------------------------------------------
 # Pretty output (degrades gracefully if the terminal has no color)
@@ -682,6 +682,7 @@ write_chat_html() {
       </span>
     </div>
     <div class="hgroup hright">
+      <button class="tbtn iconbtn" id="goalsBtn" type="button" title="Goal limits — the honest record of what your local setup actually reached vs the ceiling it hit, from your goal runs" aria-label="Goal limits">&#127919;</button>
       <button class="tbtn iconbtn" id="themeBtn" type="button" title="Switch between dark and light" aria-label="Toggle dark / light theme">&#9790;</button>
       <button class="tbtn" id="dlBtn" title="Download the current app you've built as an .html file" disabled>Download</button>
       <button class="tbtn" id="depBtn" title="Deploy — serve this app on a real local URL (opens in a new tab, keeps running after you close the builder). Needs the --agent server." disabled>&#128640; Deploy</button>
@@ -743,6 +744,13 @@ write_chat_html() {
     <div class="modal">
       <h3>&#128218; Knowledge <button class="mclose" id="knowClose" title="Close">&times;</button></h3>
       <div class="mbody" id="knowBody"></div>
+    </div>
+  </div>
+
+  <div class="modal-bg" id="goalsModal" hidden>
+    <div class="modal">
+      <h3>&#127919; Goal limits <button class="mclose" id="goalsClose" title="Close">&times;</button></h3>
+      <div class="mbody" id="goalsBody"></div>
     </div>
   </div>
 
@@ -844,6 +852,7 @@ const sidebar = el("sidebar"), chatlist = el("chatlist"), agentChk = el("agentCh
 const goalChk = el("goalChk"), goalLabel = el("goalLabel");
 const capBtn = el("capBtn"), capModal = el("capModal"), capClose = el("capClose"), capBody = el("capBody");
 const knowBtn = el("knowBtn"), knowledgeModal = el("knowledgeModal"), knowClose = el("knowClose"), knowBody = el("knowBody");
+const goalsBtn = el("goalsBtn"), goalsModal = el("goalsModal"), goalsClose = el("goalsClose"), goalsBody = el("goalsBody");
 
 let messages = [], busy = false, currentModel = "", currentApp = "", stick = true, buildingApp = false;
 let currentId = newId(), agentReady = false;
@@ -2469,6 +2478,36 @@ async function ragPost(ep, body){
 }
 function openKnowledge(){ knowledgeModal.hidden = false; knowBody.innerHTML = '<div class="sysline">Loading…</div>'; renderKnowledge(); }
 function closeKnowledge(){ knowledgeModal.hidden = true; }
+
+/* ---------- 🎯 Goal limits dashboard: the honest record of what the local setup reaches ---------- */
+function openGoals(){ goalsModal.hidden = false; goalsBody.innerHTML = '<div class="sysline">Loading…</div>'; renderGoals(); }
+function closeGoals(){ goalsModal.hidden = true; }
+async function renderGoals(){
+  if (!agentReady){ goalsBody.innerHTML = '<div class="sysline">&#127919; Goal limits needs the <code>--agent</code> server. Start it with <code>./local-llm-setup.sh --agent</code>, then reopen this.</div>'; return; }
+  let runs = [];
+  try { runs = ((await (await fetch(AGENT_URL + "/api/agent/goalruns")).json()).runs) || []; } catch(e){}
+  if (!runs.length){ goalsBody.innerHTML = '<div class="sysline">No goal runs yet. Turn on <b>&#127919; Goal mode</b> and pursue a measurable goal — every run lands here: what it reached, or the ceiling it hit and the lever that would raise it.</div>'; return; }
+  const scored = runs.filter(r => r.autoScored !== false);
+  const reached = scored.filter(r => r.reached === true).length;
+  const ceil = scored.filter(r => r.reached === false).length;
+  const insp = runs.length - scored.length;
+  const summary = '<div class="sysline">' + runs.length + ' goal run' + (runs.length===1?'':'s') + ' · <b>' + reached + '</b> reached target · <b>' + ceil + '</b> hit a ceiling' + (insp ? ' · ' + insp + ' built by inspection' : '') + '. The honest record of what your local setup reaches — and the lever that would push each ceiling higher.</div>';
+  const rows = runs.slice().reverse().map(r => {
+    const title = (r.capability || r.url || ('a ' + (r.kind || 'goal') + ' goal')).toString().slice(0, 140);
+    const m = r.metric || {};
+    const metricLine = (m.name || r.kind || 'goal') + (r.target != null ? ' → target ' + r.target : '');
+    const climb = (r.rounds && r.rounds.length)
+      ? (r.initial_score != null ? (r.initial_score + '→' + (r.final_score != null ? r.final_score : '?') + ' · ' + r.rounds.length + ' round' + (r.rounds.length === 1 ? '' : 's')) : (r.rounds.length + ' rounds'))
+      : '';
+    let status, pillCls, pillTxt;
+    if (r.autoScored === false){ status = 'coming'; pillCls = 'coming'; pillTxt = 'built (by inspection)'; }
+    else if (r.reached === true){ status = 'active'; pillCls = 'live'; pillTxt = '✓ reached' + (r.final_score != null ? ' (' + r.final_score + ')' : ''); }
+    else { status = 'available'; pillCls = 'avail'; pillTxt = 'ceiling ' + (r.ceiling != null ? r.ceiling : (r.final_score != null ? r.final_score : '?')); }
+    const sub = escapeHtml(metricLine) + (climb ? ' · ' + escapeHtml(climb) : '') + (r.reached === false && r.lever ? ' · lever: ' + escapeHtml(r.lever) : '');
+    return capRowHtml({ status: status, name: escapeHtml(title), sub: sub, pill: '<span class="pill ' + pillCls + '">' + escapeHtml(pillTxt) + '</span>' }, "cap");
+  }).join("");
+  goalsBody.innerHTML = summary + '<div class="caph">Runs (newest first)</div>' + rows;
+}
 async function renderKnowledge(){
   const a = (typeof agentReady !== "undefined") && agentReady;
   if (!a){ knowBody.innerHTML = '<div class="sysline">📚 Knowledge needs the <code>--agent</code> server. Start it with <code>./local-llm-setup.sh --agent</code>, then reopen this.</div>'; return; }
@@ -2542,6 +2581,8 @@ function wireKnowledge(){
 }
 knowBtn.addEventListener("click", openKnowledge);
 knowClose.addEventListener("click", closeKnowledge);
+goalsBtn.addEventListener("click", openGoals);
+goalsClose.addEventListener("click", closeGoals);
 knowledgeModal.addEventListener("click", e => { if (e.target === knowledgeModal) closeKnowledge(); });
 document.addEventListener("keydown", e => { if (e.key === "Escape" && !knowledgeModal.hidden) closeKnowledge(); });
 
