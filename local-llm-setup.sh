@@ -29,7 +29,7 @@
 #   ./local-llm-setup.sh --help
 #
 set -euo pipefail
-VERSION="1.15.2"
+VERSION="1.20.0"
 
 # ----------------------------------------------------------------------------
 # Pretty output (degrades gracefully if the terminal has no color)
@@ -636,6 +636,19 @@ write_chat_html() {
   @media (max-width: 920px) { header { gap: 8px; } .toggles { gap: 12px; } .hgroup { gap: 8px; } }
   @media (max-width: 980px) { .sidebar { width: 0; display: none; } }
   @media (max-width: 860px) { main { flex-direction: column; } .chat { flex: 1 1 50%; min-width: 0; border-right: 0; border-bottom: 1px solid var(--border-subtle); } .workspace { flex: 1 1 50%; } }
+  /* 📚 Knowledge (Visual RAG) panel */
+  .ragintro { font-size: 12.5px; color: var(--dim); margin-bottom: 6px; line-height: 1.5; }
+  .ragrow { display: flex; gap: 8px; align-items: center; margin: 8px 0; }
+  .ragrow input[type=text] { flex: 1; min-width: 0; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 9px; padding: 9px 11px; font: inherit; }
+  .ragrow input[type=text]:focus { border-color: var(--accent); outline: none; }
+  .ragfile { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+  .ragstatus { color: var(--dim); font-size: 12px; }
+  .raganswer { background: var(--surface-3); border: 1px solid var(--border-card); border-radius: 10px; padding: 11px 13px; margin: 8px 0 4px; }
+  .raganswer.err { color: var(--danger-text); border-color: var(--danger-border); background: var(--danger-bg); }
+  .raganswer.thinking { color: var(--dim); }
+  .ragatext { color: var(--text); font-size: 13.5px; line-height: 1.5; white-space: pre-wrap; }
+  .ragcite { margin-top: 8px; font-size: 11px; color: var(--faint); }
+  .raghit { display: inline-block; background: var(--info-bg); border: 1px solid var(--info-border); color: var(--info-text); border-radius: 999px; padding: 1px 8px; margin: 2px 4px 0 0; font-size: 11px; }
 </style>
 </head>
 <body>
@@ -648,6 +661,7 @@ write_chat_html() {
         <ul class="menu" id="menu" hidden></ul>
       </div>
       <button class="tbtn" id="capBtn" title="What your machine can run + what you can add">&#129513; Capabilities</button>
+      <button class="tbtn" id="knowBtn" title="Knowledge — add pages &amp; images, then ask questions answered from what they look like (Visual RAG)">&#128218; Knowledge</button>
     </div>
     <div class="toggles">
       <span class="togwrap">
@@ -713,6 +727,12 @@ write_chat_html() {
     <div class="modal">
       <h3>&#129513; Capabilities <button class="mclose" id="capClose" title="Close">&times;</button></h3>
       <div class="mbody" id="capBody"></div>
+    </div>
+  </div>
+  <div class="modal-bg" id="knowledgeModal" hidden>
+    <div class="modal">
+      <h3>&#128218; Knowledge <button class="mclose" id="knowClose" title="Close">&times;</button></h3>
+      <div class="mbody" id="knowBody"></div>
     </div>
   </div>
 
@@ -810,6 +830,7 @@ const tabPreview = el("tabPreview"), tabCode = el("tabCode"), tabTerm = el("tabT
 const sidebar = el("sidebar"), chatlist = el("chatlist"), agentChk = el("agentChk"), agentLabel = el("agentLabel");
 const goalChk = el("goalChk"), goalLabel = el("goalLabel");
 const capBtn = el("capBtn"), capModal = el("capModal"), capClose = el("capClose"), capBody = el("capBody");
+const knowBtn = el("knowBtn"), knowledgeModal = el("knowledgeModal"), knowClose = el("knowClose"), knowBody = el("knowBody");
 
 let messages = [], busy = false, currentModel = "", currentApp = "", stick = true, buildingApp = false;
 let currentId = newId(), agentReady = false;
@@ -2103,6 +2124,54 @@ function copyVisionCmd(btn){
   if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(cmd).then(ok, ok);
   else { try { const ta = document.createElement("textarea"); ta.value = cmd; document.body.appendChild(ta); ta.select(); document.execCommand("copy"); ta.remove(); ok(); } catch (e) {} }
 }
+// ---- Install the EMBEDDING model from Capabilities — powers 📚 Visual RAG. It's used as-is
+// (no context-tune needed), so a plain browser-orchestrated Ollama /api/pull fully enables it,
+// exactly like the vision model. The 3s renderCaps poll flips the row to "Installed".
+const EMBED_MODEL = "nomic-embed-text";
+let embedPull = { state:"idle", pct:0, label:"" };   // idle | pulling | done | error
+function patchEmbedProgress(){ const f = el("embfill"); if (f) f.style.width = embedPull.pct+"%"; const l = el("emblabel"); if (l) l.textContent = embedPull.label; }
+async function installEmbed(){
+  if (embedPull.state === "pulling") return;
+  embedPull = { state:"pulling", pct:0, label:"Starting download…" };
+  renderCaps();
+  try {
+    const res = await fetch(API + "/api/pull", { method:"POST", headers:{ "Content-Type":"application/json" },
+      body: JSON.stringify({ name: EMBED_MODEL, stream:true }) });
+    if (!res.ok || !res.body) throw new Error("Ollama returned HTTP " + res.status);
+    const reader = res.body.getReader(), dec = new TextDecoder(); let buf = "";
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream:true });
+      let nl; while ((nl = buf.indexOf("\n")) >= 0) {
+        const line = buf.slice(0, nl).trim(); buf = buf.slice(nl + 1);
+        if (!line) continue;
+        let o; try { o = JSON.parse(line); } catch (e) { continue; }
+        if (o.error) throw new Error(o.error);
+        const st = (o.status || "").trim();
+        if (typeof o.total === "number" && typeof o.completed === "number" && o.total > 0) {
+          embedPull.pct = Math.min(100, Math.round(o.completed / o.total * 100));
+          embedPull.label = "Downloading " + embedPull.pct + "% · " + fmtGB(o.completed) + " / " + fmtGB(o.total);
+        } else if (st) {
+          embedPull.label = st.charAt(0).toUpperCase() + st.slice(1) + "…";
+        }
+        if (/^success$/i.test(st)) embedPull.pct = 100;
+        patchEmbedProgress();
+      }
+    }
+    embedPull = { state:"done", pct:100, label:"Installed" };
+    loadModels(); renderCaps();
+  } catch (e) {
+    embedPull = { state:"error", pct:embedPull.pct, label:(e && e.message ? e.message : "Install failed") };
+    renderCaps();
+  }
+}
+function copyEmbedCmd(btn){
+  const cmd = "ollama pull " + EMBED_MODEL;
+  const ok = () => { if (btn) { const t = btn.textContent; btn.textContent = "copied ✓"; setTimeout(() => { btn.textContent = t; }, 1400); } };
+  if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(cmd).then(ok, ok);
+  else { try { const ta = document.createElement("textarea"); ta.value = cmd; document.body.appendChild(ta); ta.select(); document.execCommand("copy"); ta.remove(); ok(); } catch (e) {} }
+}
 // ---- Install a full coder+reasoner TIER from Capabilities, mirroring the installer exactly:
 // pull each base model, then create its context-tuned alias (num_ctx 8192) so the builder picks
 // it up identically to a fresh setup. Browser-orchestrated via Ollama's API, like the vision one.
@@ -2158,6 +2227,7 @@ async function renderCaps(){
   try { const ns = ((await (await fetch(API + "/api/tags")).json()).models || []).map(m => m.name); if (ns.length) inst = ns.map(n => ({ name: n, params: parseParams(n), role: parseRole(n) })); } catch(e){}
   const hasTier = n => inst.some(m => (m.role==="coder"||m.role==="reasoner") && Math.round(m.params)===n);
   const hasVision = inst.some(m => /vl|llava|vision|moondream|bakllava|minicpm-?v/i.test(m.name));
+  const hasEmbed = inst.some(m => /embed|nomic|bge|gte|minilm|arctic|mxbai/i.test(m.name));
   const tiers = [
     { n:7,  need:7,  gb:"~8 GB",  dl:"~9 GB",  label:"7B coder + reasoner",  models:["qwen2.5-coder:7b","deepseek-r1:7b"],   unlock:"genuinely useful local coding" },
     { n:14, need:14, gb:"~16 GB", dl:"~18 GB", label:"14B coder + reasoner", models:["qwen2.5-coder:14b","deepseek-r1:14b"], unlock:"the builder + cloning we recommend", star:true },
@@ -2213,6 +2283,27 @@ async function renderCaps(){
   modelRows.push({ status: visStatus, name:"Vision model", models:["qwen2.5vl:7b"],
     sub:"needs ~6 GB (~24 GB to run alongside the coder)", unlock:"lets the builder SEE the page → visual clone fidelity",
     pill: visPill, action: visAction });
+  // Embedding model — tiny, used as-is, powers 📚 Visual RAG. Same one-click install path as vision.
+  if (hasEmbed && embedPull.state !== "idle" && embedPull.state !== "pulling") embedPull = { state:"idle", pct:0, label:"" };
+  let embStatus, embPill, embAction = "";
+  if (hasEmbed) { embStatus = "active"; embPill = '<span class="pill live">✓ Installed</span>'; }
+  else if (embedPull.state === "pulling") {
+    embStatus = "available"; embPill = '<span class="pill pulling">Installing…</span>';
+    embAction = '<div class="capbar"><div class="capbar-fill" id="embfill" style="width:'+embedPull.pct+'%"></div></div>'
+      + '<div class="pulllabel" id="emblabel">'+escCap(embedPull.label||"Starting…")+'</div>';
+  } else if (embedPull.state === "done") {
+    embStatus = "active"; embPill = '<span class="pill live">✓ Installed</span>';
+  } else if (embedPull.state === "error") {
+    embStatus = "available"; embPill = '<span class="pill err">Failed</span>';
+    embAction = '<div class="pullerr" id="emblabel">'+escCap(embedPull.label)+' — you can run it in a terminal instead.</div>'
+      + '<div class="pullbtns"><button class="capbtn" data-act="install-embed">↻ Retry</button><button class="caplink" data-act="copy-embed">or copy command</button></div>';
+  } else {
+    embStatus = "available"; embPill = '<span class="pill avail">Not installed</span>';
+    embAction = '<div class="pullbtns"><button class="capbtn" data-act="install-embed">⬇ Install embedding model</button><button class="caplink" data-act="copy-embed">or copy command</button></div>';
+  }
+  modelRows.push({ status: embStatus, name:"Embedding model", models:[EMBED_MODEL],
+    sub:"tiny (~274 MB) · powers 📚 Visual RAG", unlock:"retrieve your docs by how they LOOK (caption-then-embed)",
+    pill: embPill, action: embAction });
   const a = (typeof agentReady !== "undefined") && agentReady;
   const caps = [
     { status:"active", name:"Build single-page apps", sub:"live preview, any model" },
@@ -2221,6 +2312,7 @@ async function renderCaps(){
     { status:a?"active":"available", name:"🎯 Goal mode (forge → agree → pursue → learn)", sub:a?"active":"needs --agent" },
     { status:a?"active":"available", name:"Agent tools (run · write · fetch · gitsync)", sub:a?"active":"needs --agent" },
     { status:(a && hasVision)?"active":"available", name:"Vision-critique clone loop", sub:(a && hasVision)?"live — clones get a visual critique pass that drives fixes":(hasVision?"needs the --agent server":"install the vision model above to turn this on") },
+    { status:(a && hasVision && hasEmbed)?"active":"available", name:"📚 Visual RAG — ask your docs by sight", sub:(a && hasVision && hasEmbed)?"live — add pages/images in 📚 Knowledge, then ask":(!a?"needs the --agent server":(!hasEmbed?"install the embedding model above":"install the vision model above")) },
     { status:"coming", name:"Multi-file projects", sub:"on the roadmap" },
     { status:"coming", name:"Web search · image generation", sub:"on the roadmap" },
     { status:"coming", name:"Backend / database · one-click deploy", sub:"on the roadmap" },
@@ -2264,8 +2356,97 @@ capBody.addEventListener("click", e => { const t = e.target.closest("[data-act]"
   const a = t.getAttribute("data-act");
   if (a === "install-vision") installVision();
   else if (a === "copy-vision") copyVisionCmd(t);
+  else if (a === "install-embed") installEmbed();
+  else if (a === "copy-embed") copyEmbedCmd(t);
   else if (a === "install-tier") installTier(+t.getAttribute("data-tier")); });
 document.addEventListener("keydown", e => { if (e.key === "Escape" && !capModal.hidden) closeCaps(); });
+
+/* ---------- 📚 Knowledge (Visual RAG): add pages/images, then ask — answered from what they LOOK like ---------- */
+const RAG_COLLECTION = "default";
+let _ragBusy = false;
+async function ragPost(ep, body){
+  const r = await fetch(AGENT_URL + "/api/agent/rag/" + ep, { method:"POST", headers:{ "Content-Type":"application/json" },
+    body: JSON.stringify(Object.assign({ collection: RAG_COLLECTION }, body || {})) });
+  return r.json();
+}
+function openKnowledge(){ knowledgeModal.hidden = false; knowBody.innerHTML = '<div class="sysline">Loading…</div>'; renderKnowledge(); }
+function closeKnowledge(){ knowledgeModal.hidden = true; }
+async function renderKnowledge(){
+  const a = (typeof agentReady !== "undefined") && agentReady;
+  if (!a){ knowBody.innerHTML = '<div class="sysline">📚 Knowledge needs the <code>--agent</code> server. Start it with <code>./local-llm-setup.sh --agent</code>, then reopen this.</div>'; return; }
+  let rag = {};
+  try { rag = ((await (await fetch(AGENT_URL + "/api/agent/ping")).json()) || {}).rag || {}; } catch(e){}
+  if (!rag.ready){
+    const need = !rag.vision_model ? "vision model (qwen2.5vl:7b)" : "embedding model (nomic-embed-text)";
+    knowBody.innerHTML = '<div class="sysline">📚 Visual RAG needs the '+need+'. Open <b>🧩 Capabilities</b> and install it in one click, then come back.</div>'
+      + '<div class="pullbtns" style="margin-top:10px"><button class="capbtn" id="knowToCaps">Open 🧩 Capabilities</button></div>';
+    const b = el("knowToCaps"); if (b) b.addEventListener("click", () => { closeKnowledge(); openCapabilities(); });
+    return;
+  }
+  let tiles = [];
+  try { tiles = ((await ragPost("list")) || {}).tiles || []; } catch(e){}
+  knowBody.innerHTML =
+      '<div class="ragintro">Add pages or images, then ask questions answered from what they <b>look like</b> — tables, charts and layout included. Fully local via <code>'+escCap(rag.vision_model)+'</code> + <code>'+escCap(rag.embed_model)+'</code>.</div>'
+    + '<div class="caph">Add to knowledge</div>'
+    + '<div class="ragrow"><input type="text" id="ragUrl" placeholder="Paste a page URL (https://…)"><button class="capbtn" id="ragAddUrl">Add page</button></div>'
+    + '<div class="ragrow"><label class="capbtn ragfile">📎 Add image…<input type="file" id="ragFile" accept="image/png,image/jpeg,image/webp" hidden></label><span class="sub ragstatus" id="ragAddStatus"></span></div>'
+    + '<div class="caph">Ask your knowledge</div>'
+    + '<div class="ragrow"><input type="text" id="ragQ" placeholder="Ask about what you added…"><button class="capbtn" id="ragAsk">Ask</button></div>'
+    + '<div id="ragAnswer"></div>'
+    + '<div class="caph">Indexed pages <span class="sub">('+tiles.length+')</span>'+(tiles.length?' &nbsp;<button class="caplink" id="ragClear">clear all</button>':'')+'</div>'
+    + '<div id="ragTiles">'+(tiles.length
+        ? tiles.map(t => '<div class="caprow"><div class="cn"><b>'+escCap(t.source)+'</b><div class="sub">'+escCap((t.caption||"").slice(0,150))+'</div></div></div>').join("")
+        : '<div class="sysline">Nothing indexed yet — add a page or image above.</div>')+'</div>';
+  wireKnowledge();
+}
+function wireKnowledge(){
+  const bind = (id, ev, fn) => { const n = el(id); if (n) n.addEventListener(ev, fn); };
+  const setStatus = m => { const s = el("ragAddStatus"); if (s) s.textContent = m || ""; };
+  const addUrl = async () => {
+    const u = ((el("ragUrl") && el("ragUrl").value) || "").trim(); if (!u || _ragBusy) return;
+    _ragBusy = true; setStatus("Rendering + reading the page… (a few seconds)");
+    let ok = false;
+    try { const r = await ragPost("ingest", { url:u }); ok = !!r.ok; setStatus(r.ok ? "✓ added" : ("✗ "+(r.error||"failed"))); } catch(e){ setStatus("✗ "+e.message); }
+    _ragBusy = false; if (ok) renderKnowledge();
+  };
+  const addFile = file => {
+    if (!file || _ragBusy) return;
+    _ragBusy = true; setStatus("Looking at “"+file.name+"”… (a few seconds)");
+    const rd = new FileReader();
+    rd.onload = async () => {
+      let ok = false;
+      try { const r = await ragPost("ingest", { image_b64:String(rd.result), source:file.name }); ok = !!r.ok; setStatus(r.ok ? "✓ added" : ("✗ "+(r.error||"failed"))); } catch(e){ setStatus("✗ "+e.message); }
+      _ragBusy = false; if (ok) renderKnowledge();
+    };
+    rd.onerror = () => { _ragBusy = false; setStatus("✗ couldn't read that file"); };
+    rd.readAsDataURL(file);
+  };
+  const ask = async () => {
+    const q = ((el("ragQ") && el("ragQ").value) || "").trim(); if (!q || _ragBusy) return;
+    _ragBusy = true; const out = el("ragAnswer"); if (out) out.innerHTML = '<div class="raganswer thinking">Searching your pages + looking…</div>';
+    try {
+      const r = await ragPost("answer", { question:q, k:3 });
+      if (out){
+        if (r.ok){
+          const hits = (r.hits||[]).map(h => '<span class="raghit">'+escCap(h.source)+' · '+Math.round((h.score||0)*100)+'%</span>').join(" ");
+          out.innerHTML = '<div class="raganswer"><div class="ragatext">'+escCap(r.answer||"")+'</div>'+(hits?'<div class="ragcite">grounded in: '+hits+'</div>':'')+'</div>';
+        } else out.innerHTML = '<div class="raganswer err">'+escCap(r.error||"failed")+'</div>';
+      }
+    } catch(e){ if (out) out.innerHTML = '<div class="raganswer err">'+escCap(e.message)+'</div>'; }
+    _ragBusy = false;
+  };
+  bind("ragAddUrl","click", addUrl);
+  bind("ragUrl","keydown", e => { if (e.key === "Enter") addUrl(); });
+  bind("ragFile","change", e => addFile(e.target.files && e.target.files[0]));
+  bind("ragAsk","click", ask);
+  bind("ragQ","keydown", e => { if (e.key === "Enter") ask(); });
+  bind("ragClear","click", async () => { if (_ragBusy) return; await ragPost("clear"); renderKnowledge(); });
+}
+knowBtn.addEventListener("click", openKnowledge);
+knowClose.addEventListener("click", closeKnowledge);
+knowledgeModal.addEventListener("click", e => { if (e.target === knowledgeModal) closeKnowledge(); });
+document.addEventListener("keydown", e => { if (e.key === "Escape" && !knowledgeModal.hidden) closeKnowledge(); });
+
 loadModels(); detectAgent(); renderList(); input.focus();
 </script>
 </body>
@@ -2326,7 +2507,7 @@ write_agent_server() {
 # An approved command itself is not sandboxed (an approved `rm -rf ~` still runs) —
 # UI approval is the guardrail for mutations. Harden before any default ship.
 
-import json, os, re, socket, ipaddress, subprocess, base64, shutil, tempfile, struct, glob, sys, time, platform, urllib.request
+import json, os, re, socket, ipaddress, subprocess, base64, shutil, tempfile, struct, glob, sys, time, platform, math, sqlite3, urllib.request, urllib.error
 from collections import Counter
 from html.parser import HTMLParser
 from urllib.parse import urljoin, urlsplit
@@ -3319,6 +3500,255 @@ def detect_system():
     return info
 
 
+# ---------------- Visual RAG (PixelRAG-inspired, lean + Ollama-native) ----------------
+# Retrieve by what a page LOOKS like, not its parsed text — so tables/charts/layout that
+# text extraction throws away stay searchable. Each source renders to a screenshot tile;
+# the vision model DESCRIBES it (caption); we embed the caption with a text-embedding model
+# and store {caption, vector, png} in SQLite. A question is embedded and ranked by cosine,
+# then the top tiles' IMAGES go back to the vision model to answer. Every call is Ollama;
+# storage is stdlib sqlite3 — no torch/FAISS/numpy. (Standalone proof: tools/visual_rag.py.
+# Upgrade path: swap caption-then-embed for true Qwen3-VL pixel embeddings via an Ollama GGUF.)
+RAG_DIR = os.path.join(HOME, ".local-llm-setup", "rag")
+EMBED_RE = re.compile(r'embed|bge|gte|minilm|arctic|mxbai|nomic', re.I)
+EMBED_TIMEOUT = int(os.environ.get("LLM_EMBED_TIMEOUT", "60"))
+RAG_CAPTION_PROMPT = (
+    "You are indexing this image for VISUAL SEARCH. Describe what it shows so the right page "
+    "can later be found from a natural-language question: the kind of page and its topic, the "
+    "visible headings and key text, any tables/charts/diagrams and what they convey (axes, "
+    "trends, notable numbers), important entities/dates/figures, and the overall layout and "
+    "colours. Be concrete and factual — transcribe what is visible, do not speculate. Reply "
+    "with 2-5 plain-text sentences, no preamble, no markdown.")
+RAG_ANSWER_PROMPT = (
+    "Answer the question using ONLY what is visible in the image(s) provided — they are the most "
+    "visually relevant pages retrieved for this question. If the answer is not shown, say so "
+    "plainly rather than guessing. Be concise and point to the concrete visual evidence (a "
+    "heading, a table cell, a chart value) you used.")
+
+
+def embed_model(prefer=None):
+    """The installed text-embedding model to use, or None. Never returns a chat model."""
+    names = _ollama_models()
+    if prefer and (prefer in names or (prefer + ":latest") in names):
+        return prefer
+    return next((n for n in names if EMBED_RE.search(n)), None)
+
+
+def _embed(text, model, timeout=EMBED_TIMEOUT):
+    """One embedding vector via Ollama. Handles current /api/embed and legacy /api/embeddings."""
+    try:
+        req = urllib.request.Request(OLLAMA + "/api/embed",
+                                     data=json.dumps({"model": model, "input": text}).encode(),
+                                     headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            out = json.loads(r.read() or b"{}")
+        embs = out.get("embeddings")
+        if embs and isinstance(embs[0], list):
+            return [float(x) for x in embs[0]]
+        if isinstance(out.get("embedding"), list):
+            return [float(x) for x in out["embedding"]]
+    except urllib.error.HTTPError:
+        pass
+    req = urllib.request.Request(OLLAMA + "/api/embeddings",
+                                 data=json.dumps({"model": model, "prompt": text}).encode(),
+                                 headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        out = json.loads(r.read() or b"{}")
+    return [float(x) for x in (out.get("embedding") or [])]
+
+
+def _rag_caption(b64_png, model, timeout=None):
+    """A dense, retrieval-oriented description of one tile from the vision model."""
+    body = json.dumps({"model": model, "stream": False,
+                       "messages": [{"role": "user", "content": RAG_CAPTION_PROMPT, "images": [b64_png]}],
+                       "options": {"temperature": 0.2, "num_ctx": 4096}}).encode()
+    req = urllib.request.Request(OLLAMA + "/api/chat", data=body, headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=(timeout or VISION_TIMEOUT)) as r:
+        out = json.loads(r.read() or b"{}")
+    return ((out.get("message") or {}).get("content") or "").strip()
+
+
+def _cos(a, b):
+    """Pure-Python cosine similarity — no numpy. Brute force is instant at personal-KB scale."""
+    if not a or not b or len(a) != len(b):
+        return 0.0
+    s = da = db = 0.0
+    for x, y in zip(a, b):
+        s += x * y; da += x * x; db += y * y
+    if da == 0.0 or db == 0.0:
+        return 0.0
+    return s / (math.sqrt(da) * math.sqrt(db))
+
+
+def _rag_db(collection="default"):
+    os.makedirs(RAG_DIR, exist_ok=True)
+    safe = re.sub(r'[^A-Za-z0-9_.-]', '_', collection)[:60] or "default"
+    db = sqlite3.connect(os.path.join(RAG_DIR, safe + ".db"))
+    db.execute("CREATE TABLE IF NOT EXISTS tiles(id INTEGER PRIMARY KEY AUTOINCREMENT,"
+               " source TEXT, page INTEGER, caption TEXT, dim INTEGER, vec BLOB, png BLOB,"
+               " w INTEGER, h INTEGER, embed_model TEXT, vision_model TEXT, created REAL)")
+    db.commit()
+    return db
+
+
+def _rag_add(db, source, page, caption_text, vec, png, w, h, em, vm):
+    blob = struct.pack("<%df" % len(vec), *vec) if vec else b""
+    cur = db.execute("INSERT INTO tiles(source,page,caption,dim,vec,png,w,h,embed_model,vision_model,created)"
+                     " VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                     (source, page, caption_text, len(vec), blob, png, w, h, em, vm, time.time()))
+    db.commit()
+    return cur.lastrowid
+
+
+def _rag_rows(db, with_png=False):
+    cols = "id,source,page,caption,dim,vec" + (",png" if with_png else "")
+    rows = []
+    for r in db.execute("SELECT " + cols + " FROM tiles"):
+        vid, source, page, cap, dim, blob = r[:6]
+        vec = list(struct.unpack("<%df" % dim, blob)) if dim and blob else []
+        d = {"id": vid, "source": source, "page": page, "caption": cap, "vec": vec}
+        if with_png:
+            d["png"] = r[6]
+        rows.append(d)
+    return rows
+
+
+def _rag_tiles_from(url=None, html=None, image_b64=None, path=None, name="tile"):
+    """Produce [(png_bytes, w, h), ...] for a source. v1: a URL/HTML renders to ONE full-page
+    tile via the existing screenshot pipeline; an image (b64 or workspace path) is used as-is.
+    PDFs/page-segmentation are a deliberate fast-follow — the store/retrieval code is source-agnostic."""
+    if image_b64:
+        raw = base64.b64decode(image_b64.split(",", 1)[1] if "," in image_b64 else image_b64)
+        return [(raw, *_png_dims(raw))]
+    if path:
+        with open(safe_path(path), "rb") as f:
+            raw = f.read()
+        return [(raw, *_png_dims(raw))]
+    s = screenshot(url=url, html=html, width=1280, height=1600, name=name, full_page=True)
+    raw = base64.b64decode(s["dataurl"].split(",", 1)[1])
+    return [(raw, s.get("width", 0), s.get("height", 0))]
+
+
+def rag_ingest(collection="default", url=None, html=None, image_b64=None, path=None,
+               source=None, model=None, embed=None):
+    if not any([url, html, image_b64, path]):
+        return {"ok": False, "error": "provide one of: url, html, image_b64, path"}
+    vm, em = vision_model(model), embed_model(embed)
+    if not vm:
+        return {"ok": False, "error": "no vision model installed", "need": "qwen2.5vl:7b"}
+    if not em:
+        return {"ok": False, "error": "no embedding model installed", "need": "nomic-embed-text"}
+    src = source or (url or path or "uploaded image")
+    tiles = _rag_tiles_from(url=url, html=html, image_b64=image_b64, path=path, name=(source or "tile"))
+    db = _rag_db(collection)
+    added = []
+    try:
+        for i, (png, w, h) in enumerate(tiles):
+            cap = _rag_caption(base64.b64encode(png).decode(), vm)
+            vec = _embed(cap, em)
+            if not vec:
+                return {"ok": False, "error": "embedding model returned no vector"}
+            rid = _rag_add(db, src, i, cap, vec, png, w, h, em, vm)
+            added.append({"id": rid, "page": i, "caption": cap, "dim": len(vec)})
+    finally:
+        db.close()
+    return {"ok": True, "collection": collection, "source": src, "added": added,
+            "embed_model": em, "vision_model": vm}
+
+
+def _rag_rank(collection, question, embed=None, k=3, with_png=False):
+    em = embed_model(embed)
+    if not em:
+        return None, {"ok": False, "error": "no embedding model installed", "need": "nomic-embed-text"}
+    db = _rag_db(collection)
+    try:
+        qv = _embed(question, em)
+        rows = _rag_rows(db, with_png=with_png)
+        for row in rows:
+            row["score"] = _cos(qv, row["vec"])
+    finally:
+        db.close()
+    rows.sort(key=lambda r: r["score"], reverse=True)
+    return rows[:max(1, int(k))], None
+
+
+def rag_query(collection="default", question="", k=3, embed=None):
+    hits, err = _rag_rank(collection, question, embed, k)
+    if err:
+        return err
+    out = [{"id": h["id"], "source": h["source"], "page": h["page"],
+            "score": round(h["score"], 4), "caption": h["caption"]} for h in hits]
+    return {"ok": True, "collection": collection, "hits": out}
+
+
+def rag_answer(collection="default", question="", k=3, model=None, embed=None):
+    vm = vision_model(model)
+    if not vm:
+        return {"ok": False, "error": "no vision model installed", "need": "qwen2.5vl:7b"}
+    hits, err = _rag_rank(collection, question, embed, k, with_png=True)
+    if err:
+        return err
+    if not hits:
+        return {"ok": True, "collection": collection, "answer": "Nothing indexed yet — add a page or image first.", "hits": []}
+    imgs = [base64.b64encode(h["png"]).decode() for h in hits if h.get("png")]
+    num_ctx = min(16384, max(4096, 2200 * max(1, len(imgs)) + 2000))
+    caps = "\n".join("- [%s p%s] %s" % (h["source"], h["page"], (h["caption"] or "")[:200]) for h in hits)
+    prompt = RAG_ANSWER_PROMPT + "\n\nRetrieved page captions (reference):\n" + caps + "\n\nQuestion: " + question
+    body = json.dumps({"model": vm, "stream": False,
+                       "messages": [{"role": "user", "content": prompt, "images": imgs}],
+                       "options": {"temperature": 0.2, "num_ctx": num_ctx}}).encode()
+    req = urllib.request.Request(OLLAMA + "/api/chat", data=body, headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=VISION_TIMEOUT) as r:
+            out = json.loads(r.read() or b"{}")
+    except urllib.error.HTTPError as e:
+        detail = ""
+        try:
+            detail = e.read().decode("utf-8", "replace")[:400]
+        except Exception:
+            pass
+        return {"ok": False, "error": "vision answer failed (HTTP %d)%s" % (e.code, (": " + detail) if detail else "")}
+    answer = ((out.get("message") or {}).get("content") or "").strip()
+    meta = [{"id": h["id"], "source": h["source"], "page": h["page"],
+             "score": round(h["score"], 4), "caption": h["caption"]} for h in hits]
+    return {"ok": True, "collection": collection, "answer": answer, "hits": meta, "vision_model": vm}
+
+
+def rag_list(collection="default"):
+    db = _rag_db(collection)
+    try:
+        tiles = [{"id": r["id"], "source": r["source"], "page": r["page"], "caption": r["caption"]}
+                 for r in _rag_rows(db)]
+    finally:
+        db.close()
+    return {"ok": True, "collection": collection, "count": len(tiles), "tiles": tiles}
+
+
+def rag_clear(collection="default"):
+    db = _rag_db(collection)
+    try:
+        db.execute("DELETE FROM tiles"); db.commit()
+        n = db.total_changes
+    finally:
+        db.close()
+    return {"ok": True, "collection": collection, "cleared": n}
+
+
+def _rag_collections():
+    try:
+        return sorted(f[:-3] for f in os.listdir(RAG_DIR) if f.endswith(".db"))
+    except Exception:
+        return []
+
+
+def rag_status():
+    """One /api/tags call → which models gate Visual RAG, and what's indexed."""
+    names = _ollama_models()
+    em = next((n for n in names if EMBED_RE.search(n)), None)
+    vm = next((n for n in names if _VISION_RE.search(n)), None)
+    return {"embed_model": em, "vision_model": vm,
+            "collections": _rag_collections(), "ready": bool(em and vm)}
+
+
 class H(BaseHTTPRequestHandler):
     def _cors(self):
         o = self.headers.get("Origin")
@@ -3340,9 +3770,10 @@ class H(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path.startswith("/api/agent/ping"):
             return self._json(200, {"ok": True, "workspace": WORKSPACE,
-                                    "tools": ["run", "write", "read", "fetch", "inspect", "extract", "score", "screenshot", "gitsync", "goallog", "visioncritique"],
+                                    "tools": ["run", "write", "read", "fetch", "inspect", "extract", "score", "screenshot", "gitsync", "goallog", "visioncritique", "rag"],
                                     "goal_runs": GOAL_LOG,
                                     "vision": vision_model(),
+                                    "rag": rag_status(),
                                     "browser": bool(find_browser()) or _have_playwright(),
                                     "screenshot_backend": ("playwright" if _have_playwright()
                                                            else ("chrome" if find_browser() else None))})
@@ -3454,14 +3885,49 @@ class H(BaseHTTPRequestHandler):
                                                         width=int(req.get("width", 1024)), height=int(req.get("height", 1480))))
             except Exception as e:
                 return self._json(200, {"ok": False, "error": str(e)})
+        if path.startswith("/api/agent/rag/ingest"):
+            try:
+                return self._json(200, rag_ingest(collection=(req.get("collection") or "default"),
+                                                   url=req.get("url"), html=req.get("html"),
+                                                   image_b64=req.get("image_b64"), path=req.get("path"),
+                                                   source=req.get("source"), model=req.get("model"), embed=req.get("embed")))
+            except Exception as e:
+                return self._json(200, {"ok": False, "error": str(e)})
+        if path.startswith("/api/agent/rag/query"):
+            try:
+                return self._json(200, rag_query(collection=(req.get("collection") or "default"),
+                                                  question=(req.get("question") or req.get("q") or ""),
+                                                  k=int(req.get("k", 3)), embed=req.get("embed")))
+            except Exception as e:
+                return self._json(200, {"ok": False, "error": str(e)})
+        if path.startswith("/api/agent/rag/answer"):
+            try:
+                return self._json(200, rag_answer(collection=(req.get("collection") or "default"),
+                                                   question=(req.get("question") or req.get("q") or ""),
+                                                   k=int(req.get("k", 3)), model=req.get("model"), embed=req.get("embed")))
+            except Exception as e:
+                return self._json(200, {"ok": False, "error": str(e)})
+        if path.startswith("/api/agent/rag/list"):
+            try:
+                return self._json(200, rag_list(collection=(req.get("collection") or "default")))
+            except Exception as e:
+                return self._json(200, {"ok": False, "error": str(e)})
+        if path.startswith("/api/agent/rag/clear"):
+            try:
+                return self._json(200, rag_clear(collection=(req.get("collection") or "default")))
+            except Exception as e:
+                return self._json(200, {"ok": False, "error": str(e)})
         return self._json(404, {"error": "unknown endpoint"})
     def log_message(self, *a): pass
 
 if __name__ == "__main__":
     print(f"Local LLM agent server -> http://{HOST}:{PORT}   (workspace: {WORKSPACE})")
     _be = "playwright (managed Chromium)" if _have_playwright() else ("chrome subprocess" if find_browser() else None)
-    print("  tools: run, write, read, fetch, inspect, extract, score, screenshot, gitsync, goallog"
+    print("  tools: run, write, read, fetch, inspect, extract, score, screenshot, gitsync, goallog, rag"
           + (f"  [screenshots: {_be}]" if _be else "  [screenshots: install Playwright or Chrome to enable]"))
+    _rs = rag_status()
+    print("  visual-rag: " + ("ready (embed: %s, vision: %s)" % (_rs["embed_model"], _rs["vision_model"])
+                              if _rs["ready"] else "install an embedding model (e.g. nomic-embed-text) + a vision model to enable"))
     ThreadingHTTPServer((HOST, PORT), H).serve_forever()
 AGENTPY
 }

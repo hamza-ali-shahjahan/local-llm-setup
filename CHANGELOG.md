@@ -4,6 +4,30 @@ All notable changes to this project are documented here. Format based on
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/); this project aims to
 follow [Semantic Versioning](https://semver.org/).
 
+## [1.20.0] — 2026-06-22
+
+### Added
+- **📚 Visual RAG — ask your own pages & images by how they LOOK.** A new **Knowledge** panel (a
+  header button) lets you add a page by URL or upload an image; the builder screenshots it, has the
+  local **vision model describe it**, embeds that description, and indexes it. Ask a question and it
+  retrieves the most visually-relevant pages and answers from their *pixels* — so the tables, charts
+  and layout that text extraction throws away stay searchable. Fully local and dependency-free:
+  `qwen2.5vl` + `nomic-embed-text` via Ollama, a stdlib SQLite store and pure-Python cosine — no
+  PyTorch / FAISS / numpy. Inspired by [PixelRAG](https://github.com/StarTrail-org/PixelRAG), kept on
+  the one-command stack (caption-then-embed rather than a heavy pixel-embedding model).
+- **One-click embedding-model install in Capabilities.** A new **Embedding model** row installs
+  `nomic-embed-text` (~274 MB) with a progress bar — the same in-app Ollama `/api/pull` flow as the
+  vision model — and a gated **📚 Visual RAG** capability flips to **Live** once the `--agent`
+  server, a vision model and the embedding model are all present.
+- **Agent endpoints** `/api/agent/rag/{ingest,query,answer,list,clear}` behind the panel, with a
+  per-collection SQLite index at `~/.local-llm-setup/rag/<name>.db` (caption + vector + PNG, fully
+  self-contained) advertised in `/api/agent/ping`; plus `tools/visual_rag.py` (standalone proof +
+  `selftest`) and `tests/test_visual_rag.py`.
+
+### Fixed
+- **`--version` now reports the real version.** The `VERSION` / `$AppVersion` strings had drifted to
+  `1.15.2` across recent releases; corrected to the current release.
+
 ## [1.19.1] — 2026-06-22
 
 ### Changed
