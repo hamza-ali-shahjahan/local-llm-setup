@@ -29,7 +29,7 @@
 #   ./local-llm-setup.sh --help
 #
 set -euo pipefail
-VERSION="1.22.0"
+VERSION="1.23.0"
 
 # ----------------------------------------------------------------------------
 # Pretty output (degrades gracefully if the terminal has no color)
@@ -789,6 +789,7 @@ const AGENT_SYSTEM =
   "<extract url=\"https://...\">  — a page's design tokens (palette, fonts, type scale, radii, shadows, spacing) plus its motion and framework\n" +
   "<screenshot url=\"https://...\">  — render a page in a headless browser (Playwright's managed Chromium, installed on demand) and capture a PNG\n" +
   "<gitsync path=\".\" message=\"...\">  — turn the workspace project into a real local git repo (git init + .gitignore + commit) and export a .zip with the .git history. Pushing to GitHub stays yours to do (your own token).\n" +
+  "<deploy path=\".\" name=\"myapp\">  — serve the workspace project (or a subfolder) on a real local URL so the user can OPEN the running app in their browser; returns the link. Runs on this machine only (localhost), keeps running after the build. Use once the files are written and the user wants to see or run it.\n" +
   "To CLONE or recreate a real website, FIRST <inspect url=\"...\"> to observe its real structure, palette, fonts, design tokens AND its animations/hover states — never invent them — then write the page to match those exact colours, fonts, sections, tokens and motion. " +
   "Use the result to decide the next step. " +
   "Narrate like a careful engineer thinking out loud: before each tool call, say in ONE short line what you're about to do and why. " +
@@ -1614,7 +1615,7 @@ el("newBtn").addEventListener("click", newChat);
 el("sbToggle").addEventListener("click", () => sidebar.classList.toggle("collapsed"));
 
 /* ---------- agent tools ---------- */
-const READONLY_TOOLS = ["read", "fetch", "search", "inspect", "extract", "screenshot"];
+const READONLY_TOOLS = ["read", "fetch", "search", "inspect", "extract", "screenshot", "deploy"];
 function findToolCall(text) {
   const run = text.match(/<run>([\s\S]*?)<\/run>/i);
   if (run) return { kind: "run", cmd: run[1].trim() };
@@ -1637,6 +1638,11 @@ function findToolCall(text) {
     const attrs = gs[1] || "";
     const p = attrs.match(/path="([^"]*)"/i), m = attrs.match(/message="([^"]*)"/i), rm = attrs.match(/remote="([^"]*)"/i);
     return { kind: "gitsync", path: (p ? p[1].trim() : "."), message: (m ? m[1] : "Initial commit — scaffolded by Local LLM Builder"), remote: (rm ? rm[1].trim() : null) };
+  }
+  const dp = text.match(/<deploy\b([^>]*)\/?>/i);
+  if (dp) {
+    const pm = dp[1].match(/path="([^"]*)"/i), nm = dp[1].match(/name="([^"]*)"/i);
+    return { kind: "deploy", path: (pm ? pm[1].trim() : "."), name: (nm ? nm[1].trim() : "app") };
   }
   return null;
 }
@@ -1688,8 +1694,8 @@ async function runTool(tool) {
     return out;
   } else {
     // read-only tools: read | fetch | inspect | extract
-    const label = tool.kind === "read" ? tool.path : tool.kind === "search" ? tool.query : tool.url;
-    const payload = tool.kind === "read" ? { path: tool.path } : tool.kind === "search" ? { query: tool.query } : { url: tool.url };
+    const label = tool.kind === "read" ? tool.path : tool.kind === "search" ? tool.query : tool.kind === "deploy" ? (tool.name || tool.path) : tool.url;
+    const payload = tool.kind === "read" ? { path: tool.path } : tool.kind === "search" ? { query: tool.query } : tool.kind === "deploy" ? { name: tool.name, path: tool.path } : { url: tool.url };
     term('<span class="cmd">[' + tool.kind + '] ' + escapeHtml(label) + '</span>\n'); showTab("term");
     const r = await fetch(AGENT_URL + "/api/agent/" + tool.kind, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
     const j = await r.json();
@@ -1702,6 +1708,7 @@ async function runTool(tool) {
       if (j.dataurl) { termview.classList.remove("hidden"); termview.insertAdjacentHTML("beforeend", '<img src="' + j.dataurl + '" style="max-width:100%;border:1px solid #1e2430;border-radius:8px;margin:4px 0">'); termview.scrollTop = termview.scrollHeight; }
       out = "screenshot saved to workspace/" + (j.path || "shots") + " (" + (j.bytes || 0) + " bytes)";   // model can't see images; gets the path
     }
+    else if (tool.kind === "deploy") out = "🚀 Deployed — live at " + j.url + " (serving " + (tool.path || ".") + " on this machine; keeps running after the build).";
     else { delete j.ok; delete j.dataurl; out = JSON.stringify(j, null, 1); }   // inspect / extract / score -> the structured digest
     term(escapeHtml(out.slice(0, 1400)) + (out.length > 1400 ? "\n  …(" + out.length + " chars)" : "") + "\n\n");
     return out.slice(0, 6000);

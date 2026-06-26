@@ -4,6 +4,17 @@ All notable changes to this project are documented here. Format based on
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/); this project aims to
 follow [Semantic Versioning](https://semver.org/).
 
+## [1.23.0] — 2026-06-26
+
+### Added
+- **🚀 Agent mode can deploy too — "build me X and run it."** The local agent gains a `<deploy
+  path="." name="myapp">` tool, so after it writes a project's files it can serve them on a real
+  local URL and hand the user back a working link — closing the loop from *describe* → *build* →
+  *running app you can open*, all in one agent turn. Reuses the v1.22.0 deploy server (localhost,
+  no cloud, keeps running after the build); it's a read-only-style tool (localhost + reversible)
+  so the build-and-deploy flow doesn't stop for an extra approval. Wired into the model's tool
+  list, the tag parser and the read-only allowlist.
+
 ## [1.22.0] — 2026-06-26
 
 ### Added
