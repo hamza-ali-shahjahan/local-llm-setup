@@ -29,7 +29,7 @@
 #   ./local-llm-setup.sh --help
 #
 set -euo pipefail
-VERSION="1.21.0"
+VERSION="1.22.0"
 
 # ----------------------------------------------------------------------------
 # Pretty output (degrades gracefully if the terminal has no color)
@@ -676,6 +676,7 @@ write_chat_html() {
     <div class="hgroup hright">
       <button class="tbtn iconbtn" id="themeBtn" type="button" title="Switch between dark and light" aria-label="Toggle dark / light theme">&#9790;</button>
       <button class="tbtn" id="dlBtn" title="Download the current app you've built as an .html file" disabled>Download</button>
+      <button class="tbtn" id="depBtn" title="Deploy — serve this app on a real local URL (opens in a new tab, keeps running after you close the builder). Needs the --agent server." disabled>&#128640; Deploy</button>
     </div>
   </header>
 
@@ -827,7 +828,7 @@ const log = el("log"), empty = el("empty"), input = el("input"), sendBtn = el("s
 const dot = el("dot"), hint = el("hint"), jump = el("jump");
 const pickerBtn = el("pickerBtn"), pickerName = el("pickerName"), menu = el("menu");
 const preview = el("preview"), codeview = el("codeview"), termview = el("termview"), wsempty = el("wsempty"), wsbuild = el("wsbuild"), wsload = el("wsload"), refreshBtn = el("refreshBtn");
-const tabPreview = el("tabPreview"), tabCode = el("tabCode"), tabTerm = el("tabTerm"), dlBtn = el("dlBtn");
+const tabPreview = el("tabPreview"), tabCode = el("tabCode"), tabTerm = el("tabTerm"), dlBtn = el("dlBtn"), depBtn = el("depBtn");
 const sidebar = el("sidebar"), chatlist = el("chatlist"), agentChk = el("agentChk"), agentLabel = el("agentLabel");
 const goalChk = el("goalChk"), goalLabel = el("goalLabel");
 const capBtn = el("capBtn"), capModal = el("capModal"), capClose = el("capClose"), capBody = el("capBody");
@@ -1500,7 +1501,7 @@ preview.addEventListener("load", () => {
   }
 });
 refreshBtn.addEventListener("click", () => { if (currentApp) { loadPreview(currentApp); showTab("preview"); } });
-function setApp(code) { currentApp = injectDesign(code); codeview.textContent = currentApp; dlBtn.disabled = false; loadPreview(currentApp); showTab("preview"); }
+function setApp(code) { currentApp = injectDesign(code); codeview.textContent = currentApp; dlBtn.disabled = false; depBtn.disabled = false; loadPreview(currentApp); showTab("preview"); }
 function showTab(which) {
   for (const [t, n] of [[tabPreview, "preview"], [tabCode, "code"], [tabTerm, "term"]]) t.classList.toggle("on", n === which);
   preview.classList.toggle("hidden", which !== "preview");
@@ -1511,6 +1512,23 @@ tabPreview.addEventListener("click", () => showTab("preview"));
 tabCode.addEventListener("click", () => showTab("code"));
 tabTerm.addEventListener("click", () => showTab("term"));
 dlBtn.addEventListener("click", () => { const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([currentApp], { type: "text/html" })); a.download = "app.html"; a.click(); URL.revokeObjectURL(a.href); });
+depBtn.addEventListener("click", async () => {
+  if (!currentApp) return;
+  if (!agentReady) { term('<span class="err">&#128640; Deploy needs the <code>--agent</code> server. Start it with <code>./local-llm-setup.sh --agent</code>, then reload this page.</span>\n\n'); showTab("term"); return; }
+  const firstUser = (messages.find(m => m.role === "user") || {}).content || "app";
+  const name = firstUser.split(/\s+/).slice(0, 6).join(" ").slice(0, 60) || "app";
+  const old = depBtn.textContent; depBtn.disabled = true; depBtn.textContent = "Deploying…";
+  try {
+    const r = await fetch(AGENT_URL + "/api/agent/deploy", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name, html: currentApp }) });
+    const j = await r.json();
+    if (!j.ok) throw new Error(j.error || "deploy failed");
+    term('<span class="cmd">[deploy] ' + escapeHtml(j.name) + '</span>\n  &#128640; Live locally at <a href="' + escapeHtml(j.url) + '" target="_blank" rel="noopener">' + escapeHtml(j.url) + '</a> — a real page in its own tab; keeps running after you close the builder.' + (j.lan ? '\n  Reachable on your Wi-Fi (host 0.0.0.0).' : '') + '\n\n');
+    showTab("term");
+    window.open(j.url, "_blank", "noopener");
+  } catch (e) {
+    term('<span class="err">deploy failed: ' + escapeHtml(String(e && e.message || e)) + '</span>\n\n'); showTab("term");
+  } finally { depBtn.textContent = old; depBtn.disabled = !currentApp; }
+});
 function term(html) { termview.classList.remove("hidden"); termview.insertAdjacentHTML("beforeend", html); termview.scrollTop = termview.scrollHeight; }
 
 /* ---------- history (localStorage) ---------- */
@@ -1564,7 +1582,7 @@ function resetWorkspace() {
 }
 function newChat() {
   currentId = newId(); messages = []; currentApp = "";
-  resetWorkspace(); loadPreview(""); dlBtn.disabled = true;
+  resetWorkspace(); loadPreview(""); dlBtn.disabled = true; depBtn.disabled = true;
   wsempty.classList.remove("hidden"); showTab("preview");
   clearMessagesUI(); empty.style.display = ""; renderList(); input.focus();
 }
@@ -1585,7 +1603,7 @@ function openChat(id) {
   } else {
     for (const m of messages) addMsg(m.role, m.content);   // older sessions saved before transcripts
   }
-  codeview.textContent = currentApp; dlBtn.disabled = !currentApp; loadPreview(currentApp);
+  codeview.textContent = currentApp; dlBtn.disabled = !currentApp; depBtn.disabled = !currentApp; loadPreview(currentApp);
   showTab("preview"); renderList(); stick = true; scrollDown();
 }
 function deleteChat(id) {
@@ -2511,11 +2529,11 @@ write_agent_server() {
 # An approved command itself is not sandboxed (an approved `rm -rf ~` still runs) —
 # UI approval is the guardrail for mutations. Harden before any default ship.
 
-import json, os, re, socket, ipaddress, subprocess, base64, shutil, tempfile, struct, glob, sys, time, platform, math, sqlite3, urllib.request, urllib.error
+import json, os, re, socket, ipaddress, subprocess, base64, shutil, tempfile, struct, glob, sys, time, platform, math, sqlite3, threading, functools, urllib.request, urllib.error
 from collections import Counter
 from html.parser import HTMLParser
 from urllib.parse import urljoin, urlsplit, parse_qs, urlencode
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer, SimpleHTTPRequestHandler
 
 HOST, PORT = "127.0.0.1", int(os.environ.get("LLM_AGENT_PORT", "8765"))
 HOME = os.path.expanduser("~")
@@ -2649,6 +2667,94 @@ def web_search(query, k=6):
         html = r.read(SEARCH_CAP).decode("utf-8", "replace")
     res = _parse_ddg(html, k)
     return {"query": q, "provider": "duckduckgo", "results": res, "count": len(res)}
+
+# ---------- local deploy (serve a built app on a real local URL) ----------
+# "Deploy" the offline way: persist the app and serve it on a real http:// URL on THIS
+# machine. The point is to escape the builder's iframe — your app gets a standalone,
+# bookmarkable page with a real origin (relative paths, fetch, service workers all work)
+# and keeps running after you close the builder. 127.0.0.1 by default (your eyes only);
+# pass host="0.0.0.0" to also reach it from your phone on the same Wi-Fi. No cloud, no key.
+DEPLOY_DIR = os.path.realpath(os.path.join(HOME, ".local-llm-setup", "deploys"))
+_DEPLOYS = {}                       # slug -> {httpd, thread, port, host, dir, name}
+_DEPLOYS_LOCK = threading.Lock()
+
+class _QuietHTTP(SimpleHTTPRequestHandler):
+    def log_message(self, *a):      # don't spam the agent server's stdout per request
+        pass
+
+def _slug(name):
+    s = re.sub(r"[^a-zA-Z0-9_-]+", "-", (name or "app").strip()).strip("-").lower()
+    return s[:48] or "app"
+
+def _lan_ip():
+    """A non-loopback address for the LAN-share URL — purely local lookup, no packets out."""
+    try:
+        for ip in socket.gethostbyname_ex(socket.gethostname())[2]:
+            if not ip.startswith("127."):
+                return ip
+    except Exception:
+        pass
+    return "0.0.0.0"
+
+def _stop_locked(slug):             # caller holds _DEPLOYS_LOCK
+    d = _DEPLOYS.pop(slug, None)
+    if not d:
+        return False
+    try: d["httpd"].shutdown()
+    except Exception: pass
+    try: d["httpd"].server_close()
+    except Exception: pass
+    return True
+
+def _deploy_url(host, port):
+    return "http://%s:%d/" % ("127.0.0.1" if host == "127.0.0.1" else _lan_ip(), port)
+
+def deploy(name, html=None, path=None, host="127.0.0.1"):
+    """Persist an app under ~/.local-llm-setup/deploys/<slug>/ and serve it on a fresh
+    local port. Re-deploying the same name replaces its running server. Returns the URL."""
+    slug = _slug(name)
+    ddir = os.path.join(DEPLOY_DIR, slug)
+    os.makedirs(ddir, exist_ok=True)
+    if html is not None:
+        with open(os.path.join(ddir, "index.html"), "w", encoding="utf-8") as f:
+            f.write(html)
+    elif path:
+        src = safe_path(path)       # workspace-confined source project
+        if os.path.isdir(src):
+            for root, _dirs, files in os.walk(src):
+                rel = os.path.relpath(root, src)
+                dst = ddir if rel == "." else os.path.join(ddir, rel)
+                os.makedirs(dst, exist_ok=True)
+                for fn in files:
+                    shutil.copy2(os.path.join(root, fn), os.path.join(dst, fn))
+        else:
+            shutil.copy2(src, os.path.join(ddir, "index.html"))
+    if not os.path.isfile(os.path.join(ddir, "index.html")) and not os.listdir(ddir):
+        raise ValueError("nothing to deploy — no app HTML or source files were provided")
+    host = "0.0.0.0" if str(host) in ("0.0.0.0", "lan", "all") else "127.0.0.1"
+    handler = functools.partial(_QuietHTTP, directory=ddir)
+    with _DEPLOYS_LOCK:
+        _stop_locked(slug)          # replace any prior server for this app
+        httpd = ThreadingHTTPServer((host, 0), handler)   # port 0 -> OS picks a free one
+        port = httpd.server_address[1]
+        t = threading.Thread(target=httpd.serve_forever, daemon=True)
+        t.start()
+        _DEPLOYS[slug] = {"httpd": httpd, "thread": t, "port": port, "host": host, "dir": ddir, "name": name or slug}
+    return {"ok": True, "name": name or slug, "slug": slug, "url": _deploy_url(host, port),
+            "port": port, "host": host, "dir": ddir, "lan": host == "0.0.0.0"}
+
+def deploys_list():
+    with _DEPLOYS_LOCK:
+        out = [{"name": d["name"], "slug": s, "port": d["port"], "host": d["host"],
+                "url": _deploy_url(d["host"], d["port"]), "lan": d["host"] == "0.0.0.0"}
+               for s, d in _DEPLOYS.items()]
+    return {"ok": True, "deploys": out, "count": len(out)}
+
+def deploy_stop(name):
+    slug = _slug(name)
+    with _DEPLOYS_LOCK:
+        stopped = _stop_locked(slug)
+    return {"ok": True, "stopped": stopped, "slug": slug}
 
 # ---------- html digest (stdlib only) ----------
 _COLOR_RE = re.compile(r'#[0-9a-fA-F]{3,8}\b|rgba?\([^)]*\)|hsla?\([^)]*\)')
@@ -3920,6 +4026,23 @@ class H(BaseHTTPRequestHandler):
             try:
                 return self._json(200, {"ok": True, **web_search((req.get("query") or req.get("q") or "").strip(),
                                                                   k=int(req.get("k", 6)))})
+            except Exception as e:
+                return self._json(200, {"ok": False, "error": str(e)})
+        if path.startswith("/api/agent/deploy/stop"):
+            try:
+                return self._json(200, deploy_stop((req.get("name") or "").strip()))
+            except Exception as e:
+                return self._json(200, {"ok": False, "error": str(e)})
+        if path.startswith("/api/agent/deploys"):
+            try:
+                return self._json(200, deploys_list())
+            except Exception as e:
+                return self._json(200, {"ok": False, "error": str(e)})
+        if path.startswith("/api/agent/deploy"):
+            try:
+                return self._json(200, deploy((req.get("name") or "app"),
+                                              html=req.get("html"), path=req.get("path"),
+                                              host=(req.get("host") or "127.0.0.1")))
             except Exception as e:
                 return self._json(200, {"ok": False, "error": str(e)})
         if path.startswith("/api/agent/inspect"):

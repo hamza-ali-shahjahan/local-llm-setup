@@ -4,6 +4,20 @@ All notable changes to this project are documented here. Format based on
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/); this project aims to
 follow [Semantic Versioning](https://semver.org/).
 
+## [1.22.0] — 2026-06-26
+
+### Added
+- **🚀 One-click local deploy.** A new **Deploy** button next to Download serves your built app on a
+  real `http://` URL on your machine — a standalone page in its own browser tab with a real origin
+  (so relative paths, `fetch` and service workers actually work, unlike the `file://` download) that
+  **keeps running after you close the builder.** Localhost by default (your eyes only); pass
+  `host: "0.0.0.0"` to reach it from your phone on the same Wi-Fi. Persisted under
+  `~/.local-llm-setup/deploys/<app>/`; re-deploying the same app replaces its running server. New
+  agent endpoints `/api/agent/{deploy,deploys,deploy/stop}` backed by a stdlib `ThreadingHTTPServer`
+  on an OS-picked free port — no new deps. Covered by `tests/test_deploy.py` (a real serve →
+  fetch → stop round-trip on an ephemeral port). Turns the **One-click deploy ❌ → ✅** row in the
+  README (local-first: a public cloud URL still needs your own host — by design we ship no cloud keys).
+
 ## [1.21.0] — 2026-06-26
 
 ### Added
