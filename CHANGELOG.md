@@ -4,6 +4,16 @@ All notable changes to this project are documented here. Format based on
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/); this project aims to
 follow [Semantic Versioning](https://semver.org/).
 
+## [1.23.1] — 2026-06-26
+
+### Added
+- **See & stop your running deploys.** A compact strip above the workspace lists every app you've
+  deployed (name → clickable local URL) with a one-click **✕ Stop** for each, so deploys don't pile
+  up invisibly. Appears only when something is running; refreshes on connect, after a deploy, and
+  after a stop. Frontend-only over the existing `/api/agent/{deploys,deploy/stop}` endpoints; themed
+  for light + dark. Fixed alongside: a `.deploybar { display:flex }` rule was overriding the
+  `[hidden]` attribute, so the strip is now correctly hidden when empty (caught by a Playwright e2e).
+
 ## [1.23.0] — 2026-06-26
 
 ### Added

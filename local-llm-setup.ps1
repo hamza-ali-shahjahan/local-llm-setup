@@ -45,7 +45,7 @@ param(
   [switch]$Help
 )
 
-$AppVersion = '1.23.0'   # NB: not $Version — that name is the -Version switch param
+$AppVersion = '1.23.1'   # NB: not $Version — that name is the -Version switch param
 $Ctx = 8192             # default context window — big enough for real work, light on RAM
 $HomeDir = if ($env:USERPROFILE) { $env:USERPROFILE } else { $HOME }
 $ChatDir = Join-Path $HomeDir '.local-llm-setup\chat'   # where the chat page is written
@@ -587,6 +587,14 @@ function Write-ChatHtml {
   .hint b { color: var(--muted); font-weight: 600; }
 
   .tabs { flex: none; display: flex; align-items: center; gap: 4px; padding: 8px 12px; border-bottom: 1px solid var(--border-subtle); }
+  .deploybar { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 6px 12px; background: var(--surface-2); border-bottom: 1px solid var(--border-subtle); font-size: 12px; }
+  .deploybar[hidden] { display: none; }   /* attribute selector beats .deploybar's display:flex so hidden actually hides */
+  .deploybar .dphead { color: var(--muted); margin-right: 2px; }
+  .deploybar .dpitem { display: inline-flex; align-items: center; gap: 6px; background: var(--surface-3); border: 1px solid var(--border); border-radius: 6px; padding: 2px 4px 2px 8px; }
+  .deploybar .dpitem a { color: var(--accent); text-decoration: none; max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .deploybar .dpitem a:hover { text-decoration: underline; }
+  .deploybar .dpstop { cursor: pointer; color: var(--danger); background: transparent; border: 0; border-radius: 4px; font-size: 13px; line-height: 1; padding: 1px 5px; }
+  .deploybar .dpstop:hover { background: var(--danger-bg); }
   .tab { background: transparent; border: 0; color: var(--muted); padding: 6px 12px; border-radius: 7px; font-size: 13px; cursor: pointer; }
   .tab.on { background: var(--hover); color: var(--text); }
   .wsbody { flex: 1; min-height: 0; position: relative; }
@@ -678,6 +686,7 @@ function Write-ChatHtml {
         <button class="tab" id="tabTerm" data-tab="term">Terminal</button>
         <button class="tabbtn" id="refreshBtn" title="Reload the preview">&#8635; Refresh</button>
       </div>
+      <div class="deploybar" id="deploybar" hidden></div>
       <div class="wsbody">
         <iframe id="preview" sandbox="allow-scripts allow-forms allow-modals allow-popups"></iframe>
         <pre id="codeview" class="hidden"></pre>
@@ -796,7 +805,7 @@ const log = el("log"), empty = el("empty"), input = el("input"), sendBtn = el("s
 const dot = el("dot"), hint = el("hint"), jump = el("jump");
 const pickerBtn = el("pickerBtn"), pickerName = el("pickerName"), menu = el("menu");
 const preview = el("preview"), codeview = el("codeview"), termview = el("termview"), wsempty = el("wsempty"), wsbuild = el("wsbuild"), wsload = el("wsload"), refreshBtn = el("refreshBtn");
-const tabPreview = el("tabPreview"), tabCode = el("tabCode"), tabTerm = el("tabTerm"), dlBtn = el("dlBtn"), depBtn = el("depBtn");
+const tabPreview = el("tabPreview"), tabCode = el("tabCode"), tabTerm = el("tabTerm"), dlBtn = el("dlBtn"), depBtn = el("depBtn"), deploybar = el("deploybar");
 const sidebar = el("sidebar"), chatlist = el("chatlist"), agentChk = el("agentChk"), agentLabel = el("agentLabel");
 const goalChk = el("goalChk"), goalLabel = el("goalLabel");
 const capBtn = el("capBtn"), capModal = el("capModal"), capClose = el("capClose"), capBody = el("capBody");
@@ -1003,7 +1012,27 @@ async function detectAgent() {
     goalChk.checked = false; goalChk.disabled = true;
     goalLabel.title = "Goal Mode needs the agent server: run  ./local-llm-setup.sh --agent";
     goalLabel.style.opacity = ".5";
-  }
+  } else { refreshDeploys(); }
+}
+
+/* ---------- running deploys (see + stop apps served by /api/agent/deploy) ---------- */
+async function refreshDeploys() {
+  if (!agentReady || !deploybar) { if (deploybar) deploybar.hidden = true; return; }
+  let list = [];
+  try {
+    const j = await (await fetch(AGENT_URL + "/api/agent/deploys", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" })).json();
+    list = (j && j.deploys) || [];
+  } catch (e) { deploybar.hidden = true; return; }
+  if (!list.length) { deploybar.hidden = true; deploybar.innerHTML = ""; return; }
+  deploybar.innerHTML = '<span class="dphead">&#128640; Running:</span>' + list.map(d =>
+    '<span class="dpitem"><a href="' + escapeHtml(d.url) + '" target="_blank" rel="noopener" title="' + escapeHtml(d.url) + '">' + escapeHtml(d.name || d.slug) + '</a>'
+    + '<button class="dpstop" data-slug="' + escapeHtml(d.slug) + '" title="Stop this deploy">&times;</button></span>').join("");
+  deploybar.hidden = false;
+  deploybar.querySelectorAll(".dpstop").forEach(b => b.addEventListener("click", async () => {
+    b.disabled = true;
+    try { await fetch(AGENT_URL + "/api/agent/deploy/stop", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: b.dataset.slug }) }); } catch (e) {}
+    refreshDeploys();
+  }));
 }
 
 /* ---------- chat rendering ---------- */
@@ -1493,6 +1522,7 @@ depBtn.addEventListener("click", async () => {
     term('<span class="cmd">[deploy] ' + escapeHtml(j.name) + '</span>\n  &#128640; Live locally at <a href="' + escapeHtml(j.url) + '" target="_blank" rel="noopener">' + escapeHtml(j.url) + '</a> — a real page in its own tab; keeps running after you close the builder.' + (j.lan ? '\n  Reachable on your Wi-Fi (host 0.0.0.0).' : '') + '\n\n');
     showTab("term");
     window.open(j.url, "_blank", "noopener");
+    refreshDeploys();
   } catch (e) {
     term('<span class="err">deploy failed: ' + escapeHtml(String(e && e.message || e)) + '</span>\n\n'); showTab("term");
   } finally { depBtn.textContent = old; depBtn.disabled = !currentApp; }
@@ -1675,7 +1705,7 @@ async function runTool(tool) {
       if (j.dataurl) { termview.classList.remove("hidden"); termview.insertAdjacentHTML("beforeend", '<img src="' + j.dataurl + '" style="max-width:100%;border:1px solid #1e2430;border-radius:8px;margin:4px 0">'); termview.scrollTop = termview.scrollHeight; }
       out = "screenshot saved to workspace/" + (j.path || "shots") + " (" + (j.bytes || 0) + " bytes)";   // model can't see images; gets the path
     }
-    else if (tool.kind === "deploy") out = "🚀 Deployed — live at " + j.url + " (serving " + (tool.path || ".") + " on this machine; keeps running after the build).";
+    else if (tool.kind === "deploy") { out = "🚀 Deployed — live at " + j.url + " (serving " + (tool.path || ".") + " on this machine; keeps running after the build)."; refreshDeploys(); }
     else { delete j.ok; delete j.dataurl; out = JSON.stringify(j, null, 1); }   // inspect / extract / score -> the structured digest
     term(escapeHtml(out.slice(0, 1400)) + (out.length > 1400 ? "\n  …(" + out.length + " chars)" : "") + "\n\n");
     return out.slice(0, 6000);
