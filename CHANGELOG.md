@@ -4,6 +4,22 @@ All notable changes to this project are documented here. Format based on
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/); this project aims to
 follow [Semantic Versioning](https://semver.org/).
 
+## [1.24.0] — 2026-06-26
+
+### Added
+- **🔌 MCP support — connect the agent to Model Context Protocol servers.** The local agent can now
+  use tools from any [MCP](https://modelcontextprotocol.io) server — filesystem, git, search, a
+  database, or your own — the same open standard Claude and other clients speak. Drop a
+  Claude-Desktop-compatible **`~/.local-llm-setup/mcp.json`** (`{"mcpServers": {name: {command, args,
+  env}}}`) and in agent mode the model can call `<mcp server="NAME" tool="TOOL">{json arguments}</mcp>`;
+  the connected servers and their tools are auto-listed in the agent prompt so it only calls real ones,
+  and each call is **approval-gated** (MCP tools can have side effects). The client is **stdlib-only** —
+  newline-delimited JSON-RPC 2.0 over each server's stdio (`initialize` → `tools/list` → `tools/call`),
+  no SDK; servers are launched lazily and kept warm in a pool. New endpoints
+  `/api/agent/mcp/{list,call}`, advertised in `/api/agent/ping`. Covered by `tests/test_mcp.py`
+  (a real mock MCP server subprocess exercises the full handshake) plus a browser e2e of the agent
+  `<mcp>` tag → dispatch → call path. Brings the builder to **MCP parity with Claude Code**, fully local.
+
 ## [1.23.1] — 2026-06-26
 
 ### Added
