@@ -4,6 +4,18 @@ All notable changes to this project are documented here. Format based on
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/); this project aims to
 follow [Semantic Versioning](https://semver.org/).
 
+## [1.25.0] — 2026-06-26
+
+### Added
+- **🎯 Goal-limits dashboard — the honest record of what your local setup actually reaches.** A new
+  header button opens a panel over your `goal_runs.jsonl`: a one-line summary (how many goals reached
+  target vs hit a ceiling vs built-by-inspection) and a row per run showing the capability, the metric
+  → target, the score climb (e.g. `53→63 over 3 rounds`), and — when it plateaued — the **ceiling it
+  hit and the lever that would push it higher** (e.g. a vision model). It's the same no-spin honesty
+  the README's comparison table leads with, now surfaced in the builder: see exactly where a local
+  model tops out, per task. Reads the existing `/api/agent/goalruns`; no new endpoint. Verified with a
+  Playwright e2e against real runs (modal opens, rows render, zero console errors).
+
 ## [1.24.1] — 2026-06-26
 
 ### Changed
