@@ -331,6 +331,7 @@ What you trade that gap *for*: it runs entirely on your machine, costs nothing, 
 | Backend / database / auth | ❌ | ⚠️ | ✅ |
 | **One-click deploy** | ✅ <sup>¶</sup> | ✅ | ✅ |
 | Git / repo sync | ✅ <sup>†</sup> | ✅ | ✅ |
+| **Connect MCP servers (tools)** | ✅ | ✅ | ❌ |
 
 <sub>✅ have it · ⚠️ partial, best-effort, or a different approach · ❌ not yet — building toward it</sub>
 
@@ -378,6 +379,20 @@ Full details, requirements, and the implementation gotchas (the Ollama context-w
 Add a page by URL or drop in an image (a slide, a chart, a scanned page) and the builder **screenshots it, has the local vision model describe what it *looks like*, embeds that, and indexes it.** Then ask a question and it retrieves the most visually-relevant pages and answers from their **pixels** — so the tables, charts and layout that plain text extraction throws away stay searchable.
 
 Fully local and dependency-free: `qwen2.5vl` + `nomic-embed-text` via Ollama, a stdlib SQLite store and pure-Python cosine — no PyTorch, FAISS or numpy. Open **📚 Knowledge** in the builder (it lights up once the vision + embedding models are installed — one click each in **🧩 Capabilities**). Inspired by [PixelRAG](https://github.com/StarTrail-org/PixelRAG), kept on the one-command stack.
+
+## Connect MCP servers — 🔌 (optional)
+
+In **agent mode** the builder can use tools from any [**MCP**](https://modelcontextprotocol.io) server — filesystem, git, web search, a database, or your own — the same open standard Claude speaks. Drop a **Claude-Desktop-compatible** config at `~/.local-llm-setup/mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "filesystem": { "command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "/path/you/allow"] }
+  }
+}
+```
+
+The agent connects on startup, lists each server's tools in its own prompt, and calls them with `<mcp server="filesystem" tool="read_file">{ "path": "notes.md" }</mcp>` — **each call asks your approval first** (MCP tools can have side effects). The client is stdlib-only (newline-delimited JSON-RPC 2.0 over the server's stdio); nothing leaves your machine but whatever the server you chose does. This is **MCP parity with Claude Code**, fully local.
 
 ## Requirements
 

@@ -45,7 +45,7 @@ param(
   [switch]$Help
 )
 
-$AppVersion = '1.23.1'   # NB: not $Version — that name is the -Version switch param
+$AppVersion = '1.24.0'   # NB: not $Version — that name is the -Version switch param
 $Ctx = 8192             # default context window — big enough for real work, light on RAM
 $HomeDir = if ($env:USERPROFILE) { $env:USERPROFILE } else { $HOME }
 $ChatDir = Join-Path $HomeDir '.local-llm-setup\chat'   # where the chat page is written
@@ -766,6 +766,7 @@ const AGENT_SYSTEM =
   "<screenshot url=\"https://...\">  — render a page in a headless browser (Playwright's managed Chromium, installed on demand) and capture a PNG\n" +
   "<gitsync path=\".\" message=\"...\">  — turn the workspace project into a real local git repo (git init + .gitignore + commit) and export a .zip with the .git history. Pushing to GitHub stays yours to do (your own token).\n" +
   "<deploy path=\".\" name=\"myapp\">  — serve the workspace project (or a subfolder) on a real local URL so the user can OPEN the running app in their browser; returns the link. Runs on this machine only (localhost), keeps running after the build. Use once the files are written and the user wants to see or run it.\n" +
+  "<mcp server=\"NAME\" tool=\"TOOL\">{json arguments}</mcp>  — call a tool on a connected MCP server (filesystem, git, search, a database, your own server…). Put the tool's arguments as a JSON object in the body. The servers and tools actually connected are listed at the end of this prompt — only call those.\n" +
   "To CLONE or recreate a real website, FIRST <inspect url=\"...\"> to observe its real structure, palette, fonts, design tokens AND its animations/hover states — never invent them — then write the page to match those exact colours, fonts, sections, tokens and motion. " +
   "Use the result to decide the next step. " +
   "Narrate like a careful engineer thinking out loud: before each tool call, say in ONE short line what you're about to do and why. " +
@@ -1012,7 +1013,7 @@ async function detectAgent() {
     goalChk.checked = false; goalChk.disabled = true;
     goalLabel.title = "Goal Mode needs the agent server: run  ./local-llm-setup.sh --agent";
     goalLabel.style.opacity = ".5";
-  } else { refreshDeploys(); }
+  } else { refreshDeploys(); loadMcpTools(); }
 }
 
 /* ---------- running deploys (see + stop apps served by /api/agent/deploy) ---------- */
@@ -1033,6 +1034,19 @@ async function refreshDeploys() {
     try { await fetch(AGENT_URL + "/api/agent/deploy/stop", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: b.dataset.slug }) }); } catch (e) {}
     refreshDeploys();
   }));
+}
+
+/* ---------- MCP tools (connected servers exposed to the agent prompt) ---------- */
+let mcpPrompt = "";
+async function loadMcpTools() {
+  mcpPrompt = "";
+  if (!agentReady) return;
+  try {
+    const j = await (await fetch(AGENT_URL + "/api/agent/mcp/list", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" })).json();
+    const lines = ((j && j.servers) || []).filter(s => s.ok && s.tools && s.tools.length)
+      .map(s => '- server "' + s.name + '": ' + s.tools.map(t => t.name + (t.description ? " (" + t.description + ")" : "")).join(", "));
+    if (lines.length) mcpPrompt = "\n\nConnected MCP servers and their tools (call ONLY these, with <mcp>):\n" + lines.join("\n");
+  } catch (e) {}
 }
 
 /* ---------- chat rendering ---------- */
@@ -1641,6 +1655,13 @@ function findToolCall(text) {
     const pm = dp[1].match(/path="([^"]*)"/i), nm = dp[1].match(/name="([^"]*)"/i);
     return { kind: "deploy", path: (pm ? pm[1].trim() : "."), name: (nm ? nm[1].trim() : "app") };
   }
+  const mc = text.match(/<mcp\s+([^>]*?)>([\s\S]*?)<\/mcp>/i) || text.match(/<mcp\s+([^>]*?)\/?>/i);
+  if (mc) {
+    const sv = mc[1].match(/server="([^"]*)"/i), tl = mc[1].match(/tool="([^"]*)"/i);
+    const body = (mc[2] || "").trim();
+    let args = {}; if (body) { try { args = JSON.parse(body); } catch (e) {} }
+    return { kind: "mcp", server: (sv ? sv[1].trim() : ""), tool: (tl ? tl[1].trim() : ""), args: args, argsRaw: body };
+  }
   return null;
 }
 function approvalCard(tool) {
@@ -1649,9 +1670,11 @@ function approvalCard(tool) {
     c.className = "msg bot";
     const label = tool.kind === "run" ? "Run this command?"
                 : tool.kind === "gitsync" ? "Make this a local git repo + commit?"
+                : tool.kind === "mcp" ? ("Call MCP tool “" + tool.tool + "” on “" + tool.server + "”?")
                 : ("Write file: " + tool.path + "?");
     const codeTxt = tool.kind === "run" ? tool.cmd
                   : tool.kind === "gitsync" ? ("git init + .gitignore + commit\npath: " + tool.path + "\nmessage: " + tool.message + (tool.remote ? "\nremote (configured, NOT pushed): " + tool.remote : ""))
+                  : tool.kind === "mcp" ? (tool.server + " → " + tool.tool + "\narguments: " + (tool.argsRaw || "{}"))
                   : tool.content;
     c.innerHTML = '<div class="who">&#9889;</div><div class="body"><div class="approve"><div class="lbl"></div><pre></pre><div class="btns"><button class="ok">Approve</button><button class="no">Skip</button></div></div></div>';
     c.querySelector(".lbl").textContent = label;
@@ -1689,6 +1712,14 @@ async function runTool(tool) {
               + "\n  to push (your token): " + j.push_hint;
     term(escapeHtml(out) + "\n\n");
     return out;
+  } else if (tool.kind === "mcp") {
+    term('<span class="cmd">[mcp] ' + escapeHtml(tool.server + " → " + tool.tool) + '</span>\n'); showTab("term");
+    const r = await fetch(AGENT_URL + "/api/agent/mcp/call", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ server: tool.server, tool: tool.tool, arguments: tool.args }) });
+    const j = await r.json();
+    if (!j.ok) { term('<span class="err">' + escapeHtml(j.error || "failed") + "</span>\n\n"); return "mcp error: " + (j.error || "failed"); }
+    const out = (j.text || "(no output)") + (j.isError ? "  [the MCP tool reported an error]" : "");
+    term(escapeHtml(out.slice(0, 1400)) + (out.length > 1400 ? "\n  …(" + out.length + " chars)" : "") + "\n\n");
+    return out.slice(0, 6000);
   } else {
     // read-only tools: read | fetch | inspect | extract
     const label = tool.kind === "read" ? tool.path : tool.kind === "search" ? tool.query : tool.kind === "deploy" ? (tool.name || tool.path) : tool.url;
@@ -1716,7 +1747,7 @@ async function runTool(tool) {
 const CLONE_CTX = 16384;   // clone gen/refine context window — room for the full render-based spec AND a complete HTML file out (8k truncated both)
 async function callModel(onTok, signal, opts) {
   opts = opts || {};
-  const sys = opts.system || (agentChk.checked ? AGENT_SYSTEM : BUILDER_SYSTEM);
+  const sys = opts.system || (agentChk.checked ? (AGENT_SYSTEM + mcpPrompt) : BUILDER_SYSTEM);
   const model = opts.model || currentModel;
   const msgs = opts.messages || messages;
   const num_ctx = opts.num_ctx || 0;   // bigger window when the caller asks for it (clones)
@@ -2542,7 +2573,7 @@ function Write-AgentServer {
 # An approved command itself is not sandboxed (an approved `rm -rf ~` still runs) —
 # UI approval is the guardrail for mutations. Harden before any default ship.
 
-import json, os, re, socket, ipaddress, subprocess, base64, shutil, tempfile, struct, glob, sys, time, platform, math, sqlite3, threading, functools, urllib.request, urllib.error
+import json, os, re, socket, ipaddress, subprocess, base64, shutil, tempfile, struct, glob, sys, time, platform, math, sqlite3, threading, functools, queue, urllib.request, urllib.error
 from collections import Counter
 from html.parser import HTMLParser
 from urllib.parse import urljoin, urlsplit, parse_qs, urlencode
@@ -2768,6 +2799,143 @@ def deploy_stop(name):
     with _DEPLOYS_LOCK:
         stopped = _stop_locked(slug)
     return {"ok": True, "stopped": stopped, "slug": slug}
+
+# ---------- MCP client (stdlib stdio JSON-RPC; connect local MCP servers as tools) ----------
+# Connect the local agent to Model Context Protocol servers — the 2025/26 standard for
+# giving an LLM tools (filesystem, git, search, databases, your own servers…). Config is
+# Claude-Desktop-compatible: ~/.local-llm-setup/mcp.json with {"mcpServers": {name: {command,
+# args, env, cwd}}}. We speak newline-delimited JSON-RPC 2.0 over the server's stdio — stdlib
+# subprocess + json only, no SDK. Servers are launched lazily and kept warm in a pool.
+MCP_CONFIG = os.path.join(HOME, ".local-llm-setup", "mcp.json")
+MCP_PROTOCOL = "2024-11-05"
+MCP_TIMEOUT = int(os.environ.get("LLM_MCP_TIMEOUT", "30"))
+
+def load_mcp_config(path=None):
+    """The mcpServers map from mcp.json (Claude-Desktop shape). Never raises."""
+    try:
+        with open(path or MCP_CONFIG) as f:
+            cfg = json.load(f)
+        servers = cfg.get("mcpServers", cfg) if isinstance(cfg, dict) else {}
+        return servers if isinstance(servers, dict) else {}
+    except Exception:
+        return {}
+
+class _MCPServer:
+    """A live stdio connection to one MCP server: the subprocess plus a reader thread that
+    parses newline-delimited JSON-RPC into a queue. Requests are issued one at a time and
+    matched by id; the spec says stdout carries ONLY protocol messages (logs go to stderr),
+    and we defensively skip any line that isn't valid JSON-RPC."""
+    def __init__(self, name, spec):
+        self.name = name; self.spec = spec
+        self.proc = None; self._id = 0; self._q = queue.Queue(); self._lock = threading.Lock()
+        self.tools = []; self.info = {}
+
+    def start(self):
+        cmd = [self.spec["command"]] + [str(a) for a in (self.spec.get("args") or [])]
+        env = dict(os.environ); env.update({k: str(v) for k, v in (self.spec.get("env") or {}).items()})
+        self.proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                     stderr=subprocess.DEVNULL, env=env, text=True, bufsize=1,
+                                     cwd=(self.spec.get("cwd") or None))
+        threading.Thread(target=self._reader, daemon=True).start()
+        self.info = self._request("initialize", {"protocolVersion": MCP_PROTOCOL, "capabilities": {},
+                                                  "clientInfo": {"name": "local-llm-setup", "version": "1"}}).get("serverInfo", {})
+        self._send({"jsonrpc": "2.0", "method": "notifications/initialized"})
+        self.tools = (self._request("tools/list", {}).get("tools") or [])
+        return self
+
+    def alive(self):
+        return self.proc is not None and self.proc.poll() is None
+
+    def _reader(self):
+        try:
+            for line in self.proc.stdout:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    self._q.put(json.loads(line))
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+    def _send(self, obj):
+        self.proc.stdin.write(json.dumps(obj) + "\n"); self.proc.stdin.flush()
+
+    def _request(self, method, params=None):
+        with self._lock:
+            self._id += 1; rid = self._id
+        self._send({"jsonrpc": "2.0", "id": rid, "method": method, "params": (params or {})})
+        deadline = time.time() + MCP_TIMEOUT
+        while True:
+            remaining = deadline - time.time()
+            if remaining <= 0:
+                raise TimeoutError("MCP server %r timed out on %s" % (self.name, method))
+            try:
+                msg = self._q.get(timeout=remaining)
+            except queue.Empty:
+                raise TimeoutError("MCP server %r timed out on %s" % (self.name, method))
+            if msg.get("id") == rid:
+                if msg.get("error"):
+                    raise RuntimeError((msg["error"] or {}).get("message", "MCP error"))
+                return msg.get("result") or {}
+            # otherwise a notification or out-of-band message — ignore (requests are serial)
+
+    def call(self, tool, arguments):
+        res = self._request("tools/call", {"name": tool, "arguments": (arguments or {})})
+        parts = []
+        for c in (res.get("content") or []):
+            parts.append(c.get("text", "") if c.get("type") == "text" else json.dumps(c))
+        return {"text": "\n".join(p for p in parts if p), "isError": bool(res.get("isError")), "content": res.get("content") or []}
+
+    def stop(self):
+        if not self.proc:
+            return
+        try: self.proc.terminate()
+        except Exception: pass
+        try: self.proc.wait(timeout=3)
+        except Exception:
+            try: self.proc.kill()
+            except Exception: pass
+        for stream in (self.proc.stdin, self.proc.stdout):
+            try: stream.close()
+            except Exception: pass
+
+_MCP = {}; _MCP_LOCK = threading.Lock()
+
+def _mcp_get(name, config_path=None):
+    with _MCP_LOCK:
+        srv = _MCP.get(name)
+        if srv and srv.alive():
+            return srv
+        cfg = load_mcp_config(config_path)
+        if name not in cfg:
+            raise ValueError("no MCP server named %r in %s" % (name, config_path or MCP_CONFIG))
+        srv = _MCPServer(name, cfg[name]).start()
+        _MCP[name] = srv
+        return srv
+
+def mcp_list(config_path=None):
+    """All configured MCP servers and the tools each exposes (connects lazily to discover)."""
+    cfg = load_mcp_config(config_path)
+    servers = []
+    for name, spec in cfg.items():
+        entry = {"name": name, "command": spec.get("command", ""), "ok": True, "tools": []}
+        try:
+            srv = _mcp_get(name, config_path)
+            entry["tools"] = [{"name": t.get("name"), "description": (t.get("description") or "")[:240]}
+                              for t in srv.tools]
+            entry["info"] = srv.info
+        except Exception as e:
+            entry["ok"] = False; entry["error"] = str(e)
+        servers.append(entry)
+    return {"ok": True, "servers": servers, "count": len(servers), "config": (config_path or MCP_CONFIG)}
+
+def mcp_call(name, tool, arguments, config_path=None):
+    if not name or not tool:
+        raise ValueError("mcp_call needs a server name and a tool name")
+    srv = _mcp_get(name, config_path)
+    return {"ok": True, "server": name, "tool": tool, **srv.call(tool, arguments)}
 
 # ---------- html digest (stdlib only) ----------
 _COLOR_RE = re.compile(r'#[0-9a-fA-F]{3,8}\b|rgba?\([^)]*\)|hsla?\([^)]*\)')
@@ -3980,6 +4148,7 @@ class H(BaseHTTPRequestHandler):
                                     "goal_runs": GOAL_LOG,
                                     "vision": vision_model(),
                                     "rag": rag_status(),
+                                    "mcp": len(load_mcp_config()),
                                     "browser": bool(find_browser()) or _have_playwright(),
                                     "screenshot_backend": ("playwright" if _have_playwright()
                                                            else ("chrome" if find_browser() else None))})
@@ -4056,6 +4225,17 @@ class H(BaseHTTPRequestHandler):
                 return self._json(200, deploy((req.get("name") or "app"),
                                               html=req.get("html"), path=req.get("path"),
                                               host=(req.get("host") or "127.0.0.1")))
+            except Exception as e:
+                return self._json(200, {"ok": False, "error": str(e)})
+        if path.startswith("/api/agent/mcp/list"):
+            try:
+                return self._json(200, mcp_list())
+            except Exception as e:
+                return self._json(200, {"ok": False, "error": str(e)})
+        if path.startswith("/api/agent/mcp/call"):
+            try:
+                return self._json(200, mcp_call(req.get("server"), req.get("tool"),
+                                                req.get("arguments") or req.get("args") or {}))
             except Exception as e:
                 return self._json(200, {"ok": False, "error": str(e)})
         if path.startswith("/api/agent/inspect"):
