@@ -4,6 +4,16 @@ All notable changes to this project are documented here. Format based on
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/); this project aims to
 follow [Semantic Versioning](https://semver.org/).
 
+## [1.24.1] — 2026-06-26
+
+### Changed
+- **🧩 Capabilities now shows your MCP servers — and stops calling shipped features "coming."** The
+  Capabilities modal gains a **🔌 MCP servers** row that lists the servers actually connected from
+  `mcp.json` and how many tools they expose (or prompts you to add the config). It also **truths up
+  two stale rows**: Web search and One-click deploy were still listed under "on the roadmap" after
+  shipping in v1.21/v1.22 — both now read **active**, and the agent-tools row lists `search` and
+  `deploy`. Frontend-only.
+
 ## [1.24.0] — 2026-06-26
 
 ### Added

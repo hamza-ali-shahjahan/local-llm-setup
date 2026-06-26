@@ -29,7 +29,7 @@
 #   ./local-llm-setup.sh --help
 #
 set -euo pipefail
-VERSION="1.24.0"
+VERSION="1.24.1"
 
 # ----------------------------------------------------------------------------
 # Pretty output (degrades gracefully if the terminal has no color)
@@ -2395,17 +2395,25 @@ async function renderCaps(){
     sub:"tiny (~274 MB) · powers 📚 Visual RAG", unlock:"retrieve your docs by how they LOOK (caption-then-embed)",
     pill: embPill, action: embAction });
   const a = (typeof agentReady !== "undefined") && agentReady;
+  let mcpOk = [], mcpToolCount = 0;
+  if (a) { try {
+    const ms = ((await (await fetch(AGENT_URL + "/api/agent/mcp/list", { method:"POST", headers:{ "Content-Type":"application/json" }, body:"{}" })).json()).servers) || [];
+    mcpOk = ms.filter(s => s.ok);
+    mcpToolCount = mcpOk.reduce((n, s) => n + ((s.tools && s.tools.length) || 0), 0);
+  } catch(e){} }
   const caps = [
     { status:"active", name:"Build single-page apps", sub:"live preview, any model" },
     { status:a?"active":"available", name:"Website cloning", sub: a?(sys.render?"render-based (Playwright) — full fidelity":"basic path — re-run --agent for render fidelity"):"needs the --agent server" },
     { status:a?"active":"available", name:"Clone-fidelity score + iterate-to-target", sub:a?"active":"needs --agent" },
     { status:a?"active":"available", name:"🎯 Goal mode (forge → agree → pursue → learn)", sub:a?"active":"needs --agent" },
-    { status:a?"active":"available", name:"Agent tools (run · write · fetch · gitsync)", sub:a?"active":"needs --agent" },
+    { status:a?"active":"available", name:"Agent tools (run · write · fetch · search · deploy · gitsync)", sub:a?"active":"needs --agent" },
     { status:(a && hasVision)?"active":"available", name:"Vision-critique clone loop", sub:(a && hasVision)?"live — clones get a visual critique pass that drives fixes":(hasVision?"needs the --agent server":"install the vision model above to turn this on") },
     { status:(a && hasVision && hasEmbed)?"active":"available", name:"📚 Visual RAG — ask your docs by sight", sub:(a && hasVision && hasEmbed)?"live — add pages/images in 📚 Knowledge, then ask":(!a?"needs the --agent server":(!hasEmbed?"install the embedding model above":"install the vision model above")) },
+    { status:a?"active":"available", name:"🔎 Web search (keyless)", sub:a?"active — DuckDuckGo by default, or your own SearXNG":"needs --agent" },
+    { status:a?"active":"available", name:"🚀 One-click local deploy", sub:a?"active — serve your app on a real local URL":"needs --agent" },
+    { status: a ? (mcpOk.length ? "active" : "available") : "available", name:"🔌 MCP servers (external tools)", sub: !a ? "needs the --agent server" : (mcpOk.length ? ("connected: " + mcpOk.map(s => s.name).join(", ") + " · " + mcpToolCount + " tool" + (mcpToolCount === 1 ? "" : "s")) : "add ~/.local-llm-setup/mcp.json to connect servers") },
     { status:"coming", name:"Multi-file projects", sub:"on the roadmap" },
-    { status:"coming", name:"Web search · image generation", sub:"on the roadmap" },
-    { status:"coming", name:"Backend / database · one-click deploy", sub:"on the roadmap" },
+    { status:"coming", name:"Image generation · backend / database", sub:"on the roadmap" },
   ];
   const sysLine = detected
     ? "🖥️ " + (sys.os==="Darwin"?"macOS":sys.os) + " · " + (sys.gpu||"CPU only") + " · " + (sys.ram_gb||"?") + " GB RAM"
