@@ -45,7 +45,7 @@ param(
   [switch]$Help
 )
 
-$AppVersion = '1.25.0'   # NB: not $Version — that name is the -Version switch param
+$AppVersion = '1.26.0'   # NB: not $Version — that name is the -Version switch param
 $Ctx = 8192             # default context window — big enough for real work, light on RAM
 $HomeDir = if ($env:USERPROFILE) { $env:USERPROFILE } else { $HOME }
 $ChatDir = Join-Path $HomeDir '.local-llm-setup\chat'   # where the chat page is written
@@ -760,6 +760,7 @@ const BUILDER_SYSTEM =
   "Make it responsive and polished — real spacing, a clear visual hierarchy, hover states on buttons. " +
   "Respond with ONE complete HTML file in a single ```html code block (write any extra CSS/JS inline). " +
   "Put a one-line description before the code — and if you're correcting a previous version, say plainly in that line what was wrong and what you changed. When asked for a change, output the FULL updated file again. " +
+  "If the app should REMEMBER data across visits, use the built-in local database — no setup, no backend code: fetch('/api/data/<collection>') GETs the saved items as an array; POST a JSON object to add one (it returns with a numeric id); PUT /api/data/<collection>/<id> updates it; DELETE removes it. It works once the app is deployed with the 🚀 Deploy button — the live preview is sandboxed, so wrap data calls in try/catch and keep the UI usable when they fail (e.g. start empty). " +
   "For non-build questions, answer normally.";
 const AGENT_SYSTEM =
   "You are a local coding agent on the user's machine, working inside a sandboxed workspace folder. " +
@@ -2771,9 +2772,119 @@ DEPLOY_DIR = os.path.realpath(os.path.join(HOME, ".local-llm-setup", "deploys"))
 _DEPLOYS = {}                       # slug -> {httpd, thread, port, host, dir, name}
 _DEPLOYS_LOCK = threading.Lock()
 
+# ---------- per-app data store: a zero-setup local DB for DEPLOYED apps ----------
+# Every deployed app gets a SQLite-backed JSON document store behind a SAME-ORIGIN REST
+# API (GET/POST /api/data/<collection>, GET/PUT/DELETE /api/data/<collection>/<id>). The
+# DB lives NEXT TO the app dir (…/deploys/<slug>.db), never inside the served web root, so
+# the app can't fetch the raw database. Same-origin → no CORS, no extra ports. Stdlib only.
+def _data_col(name):
+    c = re.sub(r"[^a-zA-Z0-9_-]+", "", (name or ""))[:64]
+    if not c:
+        raise ValueError("invalid collection name")
+    return c
+
+def _data_open(db_path):
+    db = sqlite3.connect(db_path)
+    db.execute("CREATE TABLE IF NOT EXISTS docs (id INTEGER PRIMARY KEY AUTOINCREMENT, "
+               "collection TEXT, body TEXT, created REAL, updated REAL)")
+    db.execute("CREATE INDEX IF NOT EXISTS idx_docs_col ON docs(collection)")
+    return db
+
+def _data_doc(rid, body):
+    d = body if isinstance(body, dict) else {"value": body}
+    return {**d, "id": int(rid)}
+
+def data_list(db_path, col):
+    db = _data_open(db_path)
+    rows = db.execute("SELECT id, body FROM docs WHERE collection=? ORDER BY id", (_data_col(col),)).fetchall()
+    db.close()
+    return [_data_doc(i, json.loads(b or "{}")) for i, b in rows]
+
+def data_create(db_path, col, body):
+    db = _data_open(db_path); now = time.time()
+    cur = db.execute("INSERT INTO docs(collection, body, created, updated) VALUES(?,?,?,?)",
+                     (_data_col(col), json.dumps(body), now, now))
+    db.commit(); rid = cur.lastrowid; db.close()
+    return _data_doc(rid, body)
+
+def data_get(db_path, col, rid):
+    db = _data_open(db_path)
+    row = db.execute("SELECT body FROM docs WHERE collection=? AND id=?", (_data_col(col), int(rid))).fetchone()
+    db.close()
+    return _data_doc(rid, json.loads(row[0] or "{}")) if row else None
+
+def data_update(db_path, col, rid, body):
+    db = _data_open(db_path)
+    cur = db.execute("UPDATE docs SET body=?, updated=? WHERE collection=? AND id=?",
+                     (json.dumps(body), time.time(), _data_col(col), int(rid)))
+    db.commit(); n = cur.rowcount; db.close()
+    return _data_doc(rid, body) if n else None
+
+def data_delete(db_path, col, rid):
+    db = _data_open(db_path)
+    cur = db.execute("DELETE FROM docs WHERE collection=? AND id=?", (_data_col(col), int(rid)))
+    db.commit(); n = cur.rowcount; db.close()
+    return n > 0
+
 class _QuietHTTP(SimpleHTTPRequestHandler):
+    """Serves a deployed app's static files PLUS a same-origin /api/data/<col>[/<id>] store."""
     def log_message(self, *a):      # don't spam the agent server's stdout per request
         pass
+    def _db_path(self):
+        return os.path.realpath(self.directory).rstrip("/\\") + ".db"   # sibling of the web root — never served
+    def _read_json(self):
+        n = int(self.headers.get("Content-Length") or 0)
+        try: return json.loads((self.rfile.read(n) if n else b"") or b"{}")
+        except Exception: return {}
+    def _reply(self, code, obj):
+        body = json.dumps(obj).encode()
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+    def _data_route(self):
+        p = self.path.split("?", 1)[0]
+        if not p.startswith("/api/data/"):
+            return None
+        parts = [x for x in p[len("/api/data/"):].split("/") if x]
+        return (parts[0] if parts else "", parts[1] if len(parts) > 1 else None)
+    def _handle_data(self, method):
+        r = self._data_route()
+        if r is None:
+            return False
+        col, rid = r
+        try:
+            if not col:
+                raise ValueError("missing collection")
+            db = self._db_path()
+            if method == "GET" and rid is None:
+                self._reply(200, {"ok": True, "data": data_list(db, col)})
+            elif method == "GET":
+                d = data_get(db, col, rid); self._reply(200 if d else 404, {"ok": bool(d), "data": d})
+            elif method == "POST" and rid is None:
+                self._reply(201, {"ok": True, "data": data_create(db, col, self._read_json())})
+            elif method == "PUT" and rid is not None:
+                d = data_update(db, col, rid, self._read_json()); self._reply(200 if d else 404, {"ok": bool(d), "data": d})
+            elif method == "DELETE" and rid is not None:
+                self._reply(200, {"ok": True, "deleted": data_delete(db, col, rid)})
+            else:
+                self._reply(405, {"ok": False, "error": "method not allowed for this path"})
+        except Exception as e:
+            self._reply(400, {"ok": False, "error": str(e)})
+        return True
+    def do_GET(self):
+        if not self._handle_data("GET"):
+            super().do_GET()
+    def do_POST(self):
+        if not self._handle_data("POST"):
+            self._reply(405, {"ok": False, "error": "POST only to /api/data/<collection>"})
+    def do_PUT(self):
+        if not self._handle_data("PUT"):
+            self._reply(404, {"ok": False, "error": "not found"})
+    def do_DELETE(self):
+        if not self._handle_data("DELETE"):
+            self._reply(404, {"ok": False, "error": "not found"})
 
 def _slug(name):
     s = re.sub(r"[^a-zA-Z0-9_-]+", "-", (name or "app").strip()).strip("-").lower()

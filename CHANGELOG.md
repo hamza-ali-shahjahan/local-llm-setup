@@ -4,6 +4,23 @@ All notable changes to this project are documented here. Format based on
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/); this project aims to
 follow [Semantic Versioning](https://semver.org/).
 
+## [1.26.0] — 2026-06-27
+
+### Added
+- **🗄️ A real local database for deployed apps — so single-page apps can actually remember.** Every
+  app you 🚀 deploy now gets a **zero-setup JSON data store** behind a same-origin REST API:
+  `GET`/`POST /api/data/<collection>` and `GET`/`PUT`/`DELETE /api/data/<collection>/<id>`. A todo
+  list, notes app or guestbook persists across reloads with plain `fetch` — no backend code, no
+  config. Backed by stdlib **SQLite** (one DB per app), the `.db` is stored **beside** the app dir,
+  never inside the served web root (so the raw database can't be fetched), and it's **same-origin**
+  with the app, so there's no CORS and nothing extra exposed. The builder model is told how to use
+  it, so *"a todo app that saves my todos"* just works once deployed. Implemented by extending the
+  deploy server's request handler (`/api/data/*` → SQLite), stdlib-only. Covered by
+  `tests/test_appdata.py` (CRUD unit tests + a live deploy→HTTP round-trip + a check that the DB sits
+  outside the web root) and a Playwright e2e (deploy a todo app, add an item, **reload, it persists**).
+  Moves the README's **Backend / database** row ❌ → ⚠️ (a real local data backend; auth and arbitrary
+  server logic are still to come — kept honest).
+
 ## [1.25.0] — 2026-06-26
 
 ### Added
