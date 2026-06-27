@@ -29,7 +29,7 @@
 #   ./local-llm-setup.sh --help
 #
 set -euo pipefail
-VERSION="1.26.0"
+VERSION="1.27.0"
 
 # ----------------------------------------------------------------------------
 # Pretty output (degrades gracefully if the terminal has no color)
@@ -794,6 +794,7 @@ const BUILDER_SYSTEM =
   "Respond with ONE complete HTML file in a single ```html code block (write any extra CSS/JS inline). " +
   "Put a one-line description before the code — and if you're correcting a previous version, say plainly in that line what was wrong and what you changed. When asked for a change, output the FULL updated file again. " +
   "If the app should REMEMBER data across visits, use the built-in local database — no setup, no backend code: fetch('/api/data/<collection>') GETs the saved items as an array; POST a JSON object to add one (it returns with a numeric id); PUT /api/data/<collection>/<id> updates it; DELETE removes it. It works once the app is deployed with the 🚀 Deploy button — the live preview is sandboxed, so wrap data calls in try/catch and keep the UI usable when they fail (e.g. start empty). " +
+  "For user accounts, the same deployed app has built-in auth: POST /api/auth/signup or /api/auth/login with JSON {username, password} (a secure session cookie is set for you), GET /api/auth/me returns the logged-in {id, username} or null, POST /api/auth/logout signs out. Send fetch with credentials defaulting to same-origin so the cookie rides along. " +
   "For non-build questions, answer normally.";
 const AGENT_SYSTEM =
   "You are a local coding agent on the user's machine, working inside a sandboxed workspace folder. " +
@@ -2647,7 +2648,7 @@ write_agent_server() {
 # An approved command itself is not sandboxed (an approved `rm -rf ~` still runs) —
 # UI approval is the guardrail for mutations. Harden before any default ship.
 
-import json, os, re, socket, ipaddress, subprocess, base64, shutil, tempfile, struct, glob, sys, time, platform, math, sqlite3, threading, functools, queue, urllib.request, urllib.error
+import json, os, re, socket, ipaddress, subprocess, base64, shutil, tempfile, struct, glob, sys, time, platform, math, sqlite3, threading, functools, queue, hashlib, hmac, secrets, urllib.request, urllib.error
 from collections import Counter
 from html.parser import HTMLParser
 from urllib.parse import urljoin, urlsplit, parse_qs, urlencode
@@ -2850,6 +2851,83 @@ def data_delete(db_path, col, rid):
     db.commit(); n = cur.rowcount; db.close()
     return n > 0
 
+# ---------- per-app auth (signup / login / sessions) for DEPLOYED apps ----------
+# Same secure model as the data store: same-origin, per-app SQLite (the same <slug>.db),
+# stdlib only. Passwords are PBKDF2-HMAC-SHA256 with a per-user salt (constant-time compare);
+# sessions are 256-bit random tokens the server keeps, handed out in an HttpOnly,
+# SameSite=Strict cookie. Lets a deployed app have real logins — no service, no config.
+AUTH_ITERATIONS = 200_000
+
+def _auth_open(db_path):
+    db = sqlite3.connect(db_path)
+    db.execute("CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, "
+               "username TEXT UNIQUE, salt TEXT, pwhash TEXT, created REAL)")
+    db.execute("CREATE TABLE IF NOT EXISTS sessions (token TEXT PRIMARY KEY, user_id INTEGER, created REAL)")
+    return db
+
+def _hash_pw(password, salt):
+    return hashlib.pbkdf2_hmac("sha256", (password or "").encode(), bytes.fromhex(salt), AUTH_ITERATIONS).hex()
+
+def _new_session(db, user_id):
+    token = secrets.token_hex(32)
+    db.execute("INSERT INTO sessions(token, user_id, created) VALUES(?,?,?)", (token, user_id, time.time()))
+    db.commit()
+    return token
+
+def auth_signup(db_path, username, password):
+    username = (username or "").strip()
+    if not username or not password:
+        raise ValueError("username and password are required")
+    if len(username) > 64 or len(password) > 256:
+        raise ValueError("username or password too long")
+    db = _auth_open(db_path)
+    try:
+        if db.execute("SELECT 1 FROM users WHERE username=?", (username,)).fetchone():
+            raise ValueError("username already taken")
+        salt = secrets.token_hex(16)
+        cur = db.execute("INSERT INTO users(username, salt, pwhash, created) VALUES(?,?,?,?)",
+                         (username, salt, _hash_pw(password, salt), time.time()))
+        db.commit()
+        uid = cur.lastrowid
+        return {"user": {"id": uid, "username": username}, "token": _new_session(db, uid)}
+    finally:
+        db.close()
+
+def auth_login(db_path, username, password):
+    username = (username or "").strip()
+    db = _auth_open(db_path)
+    try:
+        row = db.execute("SELECT id, salt, pwhash FROM users WHERE username=?", (username,)).fetchone()
+        if not row:
+            return None
+        uid, salt, pwhash = row
+        if not hmac.compare_digest(pwhash, _hash_pw(password, salt)):
+            return None
+        return {"user": {"id": uid, "username": username}, "token": _new_session(db, uid)}
+    finally:
+        db.close()
+
+def auth_user_by_token(db_path, token):
+    if not token:
+        return None
+    db = _auth_open(db_path)
+    try:
+        row = db.execute("SELECT u.id, u.username FROM sessions s JOIN users u ON u.id=s.user_id "
+                         "WHERE s.token=?", (token,)).fetchone()
+        return {"id": row[0], "username": row[1]} if row else None
+    finally:
+        db.close()
+
+def auth_logout(db_path, token):
+    if not token:
+        return False
+    db = _auth_open(db_path)
+    try:
+        cur = db.execute("DELETE FROM sessions WHERE token=?", (token,)); db.commit()
+        return cur.rowcount > 0
+    finally:
+        db.close()
+
 class _QuietHTTP(SimpleHTTPRequestHandler):
     """Serves a deployed app's static files PLUS a same-origin /api/data/<col>[/<id>] store."""
     def log_message(self, *a):      # don't spam the agent server's stdout per request
@@ -2860,13 +2938,52 @@ class _QuietHTTP(SimpleHTTPRequestHandler):
         n = int(self.headers.get("Content-Length") or 0)
         try: return json.loads((self.rfile.read(n) if n else b"") or b"{}")
         except Exception: return {}
-    def _reply(self, code, obj):
+    def _reply(self, code, obj, set_cookie=None):
         body = json.dumps(obj).encode()
         self.send_response(code)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
+        if set_cookie:
+            self.send_header("Set-Cookie", set_cookie)
         self.end_headers()
         self.wfile.write(body)
+    def _cookie(self, name):
+        for part in (self.headers.get("Cookie", "") or "").split(";"):
+            k, _, v = part.strip().partition("=")
+            if k == name:
+                return v
+        return None
+    def _session_cookie(self, token, clear=False):
+        base = "session=%s; HttpOnly; SameSite=Strict; Path=/" % ("" if clear else token)
+        return base + ("; Max-Age=0" if clear else "; Max-Age=2592000")
+    def _handle_auth(self, method):
+        p = self.path.split("?", 1)[0]
+        if not p.startswith("/api/auth/"):
+            return False
+        action = p[len("/api/auth/"):].strip("/")
+        db = self._db_path()
+        try:
+            if action == "signup" and method == "POST":
+                body = self._read_json()
+                res = auth_signup(db, body.get("username"), body.get("password"))
+                self._reply(201, {"ok": True, "user": res["user"]}, self._session_cookie(res["token"]))
+            elif action == "login" and method == "POST":
+                body = self._read_json()
+                res = auth_login(db, body.get("username"), body.get("password"))
+                if res:
+                    self._reply(200, {"ok": True, "user": res["user"]}, self._session_cookie(res["token"]))
+                else:
+                    self._reply(401, {"ok": False, "error": "invalid username or password"})
+            elif action == "logout" and method == "POST":
+                auth_logout(db, self._cookie("session"))
+                self._reply(200, {"ok": True}, self._session_cookie("", clear=True))
+            elif action == "me" and method == "GET":
+                self._reply(200, {"ok": True, "user": auth_user_by_token(db, self._cookie("session"))})
+            else:
+                self._reply(404, {"ok": False, "error": "unknown auth endpoint"})
+        except Exception as e:
+            self._reply(400, {"ok": False, "error": str(e)})
+        return True
     def _data_route(self):
         p = self.path.split("?", 1)[0]
         if not p.startswith("/api/data/"):
@@ -2898,11 +3015,13 @@ class _QuietHTTP(SimpleHTTPRequestHandler):
             self._reply(400, {"ok": False, "error": str(e)})
         return True
     def do_GET(self):
-        if not self._handle_data("GET"):
-            super().do_GET()
+        if self._handle_data("GET") or self._handle_auth("GET"):
+            return
+        super().do_GET()
     def do_POST(self):
-        if not self._handle_data("POST"):
-            self._reply(405, {"ok": False, "error": "POST only to /api/data/<collection>"})
+        if self._handle_data("POST") or self._handle_auth("POST"):
+            return
+        self._reply(405, {"ok": False, "error": "unsupported POST path"})
     def do_PUT(self):
         if not self._handle_data("PUT"):
             self._reply(404, {"ok": False, "error": "not found"})

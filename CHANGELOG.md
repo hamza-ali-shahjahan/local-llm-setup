@@ -4,6 +4,23 @@ All notable changes to this project are documented here. Format based on
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/); this project aims to
 follow [Semantic Versioning](https://semver.org/).
 
+## [1.27.0] — 2026-06-27
+
+### Added
+- **🔐 Built-in auth for deployed apps — real logins, zero setup.** Backend slice 2: alongside the
+  local database, every 🚀-deployed app now gets **signup / login / sessions** at a same-origin REST
+  API — `POST /api/auth/signup`, `POST /api/auth/login`, `GET /api/auth/me`, `POST /api/auth/logout`.
+  So a deployed app can have actual user accounts (a notes app that's *yours*, a multi-user guestbook)
+  with no auth service to wire up. Security done properly with stdlib only: passwords are
+  **PBKDF2-HMAC-SHA256** (200k iterations) with a per-user random salt and constant-time comparison;
+  sessions are 256-bit random tokens handed out in an **HttpOnly, SameSite=Strict** cookie; users +
+  sessions live in the same per-app SQLite DB (outside the web root), same-origin so there's no CORS.
+  The builder model is told how to use it. Covered by `tests/test_appauth.py` (hashing/unique-salt,
+  wrong-password, duplicate-user, logout-invalidates + a live deploy→HTTP cookie flow, 7 tests) and a
+  Playwright e2e (signup → **session survives a reload** → logout). The README's **Backend / database
+  / auth** row keeps its honest ⚠️ — database + auth are real now; arbitrary server-side logic is the
+  remaining gap.
+
 ## [1.26.0] — 2026-06-27
 
 ### Added

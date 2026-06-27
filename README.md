@@ -328,14 +328,14 @@ What you trade that gap *for*: it runs entirely on your machine, costs nothing, 
 | **Web search** | ✅ <sup>‡</sup> | ✅ | ⚠️ |
 | Image generation | ❌ | ⚠️ | ✅ |
 | Multi-file projects | ❌ | ✅ | ✅ |
-| **Backend / database** / auth | ⚠️ <sup>◆</sup> | ⚠️ | ✅ |
+| **Backend / database / auth** | ⚠️ <sup>◆</sup> | ⚠️ | ✅ |
 | **One-click deploy** | ✅ <sup>¶</sup> | ✅ | ✅ |
 | Git / repo sync | ✅ <sup>†</sup> | ✅ | ✅ |
 | **Connect MCP servers (tools)** | ✅ | ✅ | ❌ |
 
 <sub>✅ have it · ⚠️ partial, best-effort, or a different approach · ❌ not yet — building toward it</sub>
 
-**Where we're behind, and committed to closing:** multi-file projects, image generation, and full backend logic + auth. And one honest note on how the visual self-check works:
+**Where we're behind, and committed to closing:** multi-file projects, image generation, and arbitrary server-side logic. And one honest note on how the visual self-check works:
 
 - **The visual self-check has two tiers.** The always-on score is _structural_ — palette, fonts, sections and design tokens vs the real page, the most *actionable* signal for a code model. Install the optional local **vision model** and clones also get a real **visual** pass: it screenshots your clone beside the original, scores how visually close it is (0–100) and names concrete gaps that drive the next fix. It's a local 7B — meaningfully closer, honestly not pixel-perfect parity.
 
@@ -347,7 +347,7 @@ What you trade that gap *for*: it runs entirely on your machine, costs nothing, 
 
 <sub>**¶&nbsp;Deploy is local-first.** One click serves your built app on a real `http://` URL on your machine — a standalone page in its own browser tab (a real origin, so relative paths, `fetch` and service workers work) that **keeps running after you close the builder**. Localhost by default; opt into `0.0.0.0` to reach it from your phone on the same Wi-Fi. A public cloud URL still needs your own host — by design we never ship cloud keys, so the keyless, private local URL is the finish line.</sub>
 
-<sub>**◆&nbsp;A real local database for deployed apps.** When you 🚀 deploy an app it also gets a **zero-setup JSON data store** at a same-origin REST API — `GET`/`POST /api/data/<collection>`, `GET`/`PUT`/`DELETE /api/data/<collection>/<id>` — backed by stdlib SQLite, stored beside the app (never in the web root) with no CORS and no config. So a todo list, notes app or guestbook actually **remembers** across visits. Still ❌: arbitrary server-side logic and auth.</sub>
+<sub>**◆&nbsp;A real local database + auth for deployed apps.** When you 🚀 deploy an app it also gets a **zero-setup JSON data store** (`GET`/`POST /api/data/<collection>`, `GET`/`PUT`/`DELETE /api/data/<collection>/<id>`) **and built-in auth** (`POST /api/auth/{signup,login,logout}`, `GET /api/auth/me`) — passwords PBKDF2-hashed with a per-user salt, sessions in an HttpOnly + SameSite=Strict cookie. Backed by stdlib SQLite, stored beside the app (never in the web root), same-origin so there's no CORS and no config. So a todo list with real logins actually **remembers** across visits. Still ❌: arbitrary server-side logic.</sub>
 
 The roadmap toward parity lives in [`docs/PRD-local-builder-v2-tools-and-goals.md`](docs/PRD-local-builder-v2-tools-and-goals.md). **Issues and PRs that turn a ❌ into a ✅ are exactly what this project is for.**
 
@@ -396,7 +396,7 @@ In **agent mode** the builder can use tools from any [**MCP**](https://modelcont
 
 The agent connects on startup, lists each server's tools in its own prompt, and calls them with `<mcp server="filesystem" tool="read_file">{ "path": "notes.md" }</mcp>` — **each call asks your approval first** (MCP tools can have side effects). The client is stdlib-only (newline-delimited JSON-RPC 2.0 over the server's stdio); nothing leaves your machine but whatever the server you chose does. This is **MCP parity with Claude Code**, fully local.
 
-## Real apps with a local database — 🗄️ (when you deploy)
+## Real apps — a local database + logins 🗄️ (when you deploy)
 
 Single-page apps usually forget everything on reload. Here they don't have to: **every app you 🚀 deploy gets a zero-setup local database** — a same-origin REST API your app calls with plain `fetch`, no backend code, no config:
 
@@ -407,7 +407,18 @@ await fetch('/api/data/todos/3', { method:'PUT', body: JSON.stringify({ done:tru
 await fetch('/api/data/todos/3', { method:'DELETE' })                                        // remove
 ```
 
-Backed by stdlib **SQLite**, one database per app, kept **outside** the served files (your app can't fetch the raw `.db`), and same-origin so there's no CORS and nothing exposed. The builder model knows about it — just ask for *"a todo app that saves my todos"* and deploy it. The data lives on your machine. (Still local-only: no auth or arbitrary server logic yet.)
+Backed by stdlib **SQLite**, one database per app, kept **outside** the served files (your app can't fetch the raw `.db`), and same-origin so there's no CORS and nothing exposed.
+
+Deployed apps also get **built-in logins** — no auth service to wire up:
+
+```js
+await fetch('/api/auth/signup', { method:'POST', body: JSON.stringify({ username, password }) }) // create user + session
+await fetch('/api/auth/login',  { method:'POST', body: JSON.stringify({ username, password }) }) // sets a secure cookie
+await fetch('/api/auth/me')                                                                       // { user: {id, username} } or null
+await fetch('/api/auth/logout', { method:'POST' })                                                // sign out
+```
+
+Passwords are **PBKDF2-hashed** with a per-user salt; the session rides in an **HttpOnly, SameSite=Strict** cookie. The builder model knows about both — just ask for *"a notes app with logins that saves my notes"* and deploy it. Everything lives on your machine. (Still local-only: no arbitrary server-side logic yet.)
 
 ## Requirements
 
