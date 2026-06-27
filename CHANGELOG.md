@@ -4,6 +4,27 @@ All notable changes to this project are documented here. Format based on
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/); this project aims to
 follow [Semantic Versioning](https://semver.org/).
 
+## [1.28.1] — 2026-06-28
+
+### Added
+- **CI now actually runs the test suite.** A new workflow **materializes** the shipped builder out of
+  the installer (the reverse of `bake.py`, since the source of truth lives outside the repo) and runs the
+  stdlib unit tests — data store, auth, **data-browser security** (no-secrets / no-phantom-tables /
+  origin-lock), goal log, git sync, visual-RAG — plus the `.sh`↔`.ps1` bake-parity check. Until now CI
+  only shell-linted + dry-ran the installer, so a logic/security regression or `.sh`/`.ps1` drift could
+  merge green. (`tools/materialize.py`, `.github/workflows/tests.yml`.)
+- **A full backend reference — [docs/backend.md](docs/backend.md)** — the data API, the auth API, the
+  🗄️ Data panel, the security model and a worked example, with a screenshot.
+
+### Changed
+- **Docs + honesty pass (surfaced by a multi-agent audit).** 🧩 Capabilities no longer calls the shipped
+  local database + auth *"coming · on the roadmap"* — it shows a live **🗄️ Local database + auth (deployed
+  apps)** row, leaving only image generation + multi-file as "coming." `SECURITY.md` is brought up to date
+  (the agent server's opt-in web-search egress, `0.0.0.0` LAN deploy, and that approved shell commands are
+  **not** sandboxed) and a dead `#quickstart` anchor fixed. `ANNOUNCEMENT.md` is marked as a point-in-time
+  post. `CONTRIBUTING.md`'s "single-file, no Python" rule is scoped to the installers (the agent server is
+  Python). README gains a Data-panel screenshot + the backend-doc link.
+
 ## [1.28.0] — 2026-06-27
 
 ### Added

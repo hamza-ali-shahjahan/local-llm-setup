@@ -4,7 +4,9 @@
 right coder/reasoner models for your machine, plus a Lovable/Bolt-style app builder with live
 preview — running **100% locally**. No cloud, no API keys, no per-token bill.
 
-The latest releases give that builder **eyes**.
+> *A point-in-time announcement (the vision-model release). For everything shipped since — keyless web search, one-click local deploy, MCP support, a goal-limits dashboard, and a full local backend for deployed apps (database + auth + a 🗄️ Data browser) — see [CHANGELOG.md](CHANGELOG.md).*
+
+This release gave that builder **eyes**.
 
 ## ✨ What's new
 

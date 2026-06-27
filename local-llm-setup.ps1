@@ -45,7 +45,7 @@ param(
   [switch]$Help
 )
 
-$AppVersion = '1.28.0'   # NB: not $Version — that name is the -Version switch param
+$AppVersion = '1.28.1'   # NB: not $Version — that name is the -Version switch param
 $Ctx = 8192             # default context window — big enough for real work, light on RAM
 $HomeDir = if ($env:USERPROFILE) { $env:USERPROFILE } else { $HOME }
 $ChatDir = Join-Path $HomeDir '.local-llm-setup\chat'   # where the chat page is written
@@ -2409,8 +2409,9 @@ async function renderCaps(){
     { status:a?"active":"available", name:"🔎 Web search (keyless)", sub:a?"active — DuckDuckGo by default, or your own SearXNG":"needs --agent" },
     { status:a?"active":"available", name:"🚀 One-click local deploy", sub:a?"active — serve your app on a real local URL":"needs --agent" },
     { status: a ? (mcpOk.length ? "active" : "available") : "available", name:"🔌 MCP servers (external tools)", sub: !a ? "needs the --agent server" : (mcpOk.length ? ("connected: " + mcpOk.map(s => s.name).join(", ") + " · " + mcpToolCount + " tool" + (mcpToolCount === 1 ? "" : "s")) : "add ~/.local-llm-setup/mcp.json to connect servers") },
+    { status:(a)?"active":"available", name:"🗄️ Local database + auth (deployed apps)", sub:a?"active — every 🚀 deploy gets a same-origin data store + logins; manage it in 🗄️ Data":"needs --agent" },
     { status:"coming", name:"Multi-file projects", sub:"on the roadmap" },
-    { status:"coming", name:"Image generation · backend / database", sub:"on the roadmap" },
+    { status:"coming", name:"Image generation", sub:"on the roadmap" },
   ];
   const sysLine = detected
     ? "🖥️ " + (sys.os==="Darwin"?"macOS":sys.os) + " · " + (sys.gpu||"CPU only") + " · " + (sys.ram_gb||"?") + " GB RAM"
