@@ -4,6 +4,25 @@ All notable changes to this project are documented here. Format based on
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/); this project aims to
 follow [Semantic Versioning](https://semver.org/).
 
+## [1.28.0] — 2026-06-27
+
+### Added
+- **🗄️ Data panel — browse, edit & delete what your deployed apps have stored.** A new header button
+  opens a panel over every deployed app's local database: pick an app, expand a collection to see its
+  rows in a table, edit a row's JSON inline or delete it, and review (or remove) user accounts. Apps
+  are enumerated from the filesystem (a *stopped* app's data is still browsable); DBs are opened
+  **read-only** for browsing and checked against `sqlite_master` first, so the browser never
+  auto-creates a table in an app that doesn't use one; rows are paginated; and every endpoint is
+  **origin-locked** behind the agent server. Security by construction: **passwords are never shown**
+  (the users view selects only id/username/created/session-count — never the hash, salt or token);
+  removing a user **cascades their sessions** so their cookie stops working immediately; every value is
+  HTML-escaped (stored-XSS-inert); every delete needs an inline confirm; edits validate JSON on both
+  sides. New endpoints `/api/agent/data/{apps,rows,update,delete,users,userdelete}`. **Designed and
+  adversarially reviewed by a multi-agent workflow** (which caught a phantom-table write path, a
+  malformed-row edge case, and a quote-escaping gap — all fixed); covered by `tests/test_appbrowse.py`
+  (11 tests incl. path-safety, no-secrets, no-phantom-tables, malformed-row tolerance, origin-lock) and
+  a Playwright e2e (render → no-secret/XSS checks → edit → delete → remove user).
+
 ## [1.27.0] — 2026-06-27
 
 ### Added

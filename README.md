@@ -420,6 +420,8 @@ await fetch('/api/auth/logout', { method:'POST' })                              
 
 Passwords are **PBKDF2-hashed** with a per-user salt; the session rides in an **HttpOnly, SameSite=Strict** cookie. The builder model knows about both — just ask for *"a notes app with logins that saves my notes"* and deploy it. Everything lives on your machine. (Still local-only: no arbitrary server-side logic yet.)
 
+And a **🗄️ Data panel** in the builder lets you browse, edit and delete what any deployed app has stored — its collections row-by-row and its user accounts (passwords are never shown). It's read-only-safe to open, origin-locked, and every delete asks first.
+
 ## Requirements
 
 - **macOS** on Apple silicon (M1 or newer recommended), **Linux** (x86-64 or ARM64), or **Windows 10/11** (native — no WSL)
