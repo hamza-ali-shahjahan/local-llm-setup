@@ -21,7 +21,7 @@ A change to one (a new tier, a new flag, a reworded prompt) should land in the o
 
 ## Ground rules
 
-1. **Each script stays single-file and dependency-free.** The Bash script needs only Bash + standard Unix tools; the PowerShell script needs only Windows PowerShell 5.1+ (built into Windows). No Python, no Node, no extra runtime. The whole point is "one file anyone can read and run."
+1. **The two installer scripts stay single-file and dependency-free.** The Bash script needs only Bash + standard Unix tools; the PowerShell script needs only Windows PowerShell 5.1+ (built into Windows) — no Python, no Node, no extra runtime to install or run *them*. The whole point is "one file anyone can read and run." (The optional builder / agent server they set up is **Python** — stdlib only, plus an optional Playwright venv for render-based cloning; keep it stdlib-only where you can.)
 2. **Nothing destructive, everything consented.** Any install or download must be gated behind a prompt (or `--yes` / `-Yes`). `--dry-run` / `-DryRun` must remain a true no-op.
 3. **Bare command lines in docs.** Never put a trailing `# comment` on a `curl … | bash` line in the README or anywhere a user copy-pastes — it can mis-parse on paste and kill the script. Put explanations on their own line, above the command.
 

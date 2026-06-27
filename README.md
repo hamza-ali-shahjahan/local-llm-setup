@@ -422,6 +422,10 @@ Passwords are **PBKDF2-hashed** with a per-user salt; the session rides in an **
 
 And a **🗄️ Data panel** in the builder lets you browse, edit and delete what any deployed app has stored — its collections row-by-row and its user accounts (passwords are never shown). It's read-only-safe to open, origin-locked, and every delete asks first.
 
+**Full reference — the data API, the auth API, the Data panel, and the security model: [docs/backend.md](docs/backend.md).**
+
+<div align="center"><img src="assets/data-panel.png" alt="The 🗄️ Data panel: an app picker, a todos collection expanded into editable rows, and a user-accounts section noting passwords are never shown" width="620"></div>
+
 ## Requirements
 
 - **macOS** on Apple silicon (M1 or newer recommended), **Linux** (x86-64 or ARM64), or **Windows 10/11** (native — no WSL)

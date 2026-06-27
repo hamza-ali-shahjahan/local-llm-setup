@@ -1,0 +1,41 @@
+name: Unit tests
+
+# The builder's source of truth lives at ~/.local-llm-setup and is baked into both
+# installers; a fresh checkout (and CI) has no dogfood instance, so we first MATERIALIZE
+# the shipped builder back out of local-llm-setup.sh, then run the stdlib test suite
+# against exactly what ships — including the data-store / auth / data-browser security
+# tests. `bake.py --check` here also catches any .sh ↔ .ps1 drift.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    name: Materialize + stdlib tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Materialize the shipped builder from the installer
+        run: python3 tools/materialize.py
+
+      - name: Bake parity (.sh / .ps1 embed the same builder)
+        run: python3 tools/bake.py --check
+
+      - name: Run the stdlib unit tests
+        run: |
+          python3 -m unittest -v \
+            tests.test_appdata tests.test_appauth tests.test_appbrowse \
+            tests.test_goal_log tests.test_bake tests.test_gitsync tests.test_visual_rag
