@@ -45,7 +45,7 @@ param(
   [switch]$Help
 )
 
-$AppVersion = '1.27.0'   # NB: not $Version — that name is the -Version switch param
+$AppVersion = '1.28.0'   # NB: not $Version — that name is the -Version switch param
 $Ctx = 8192             # default context window — big enough for real work, light on RAM
 $HomeDir = if ($env:USERPROFILE) { $env:USERPROFILE } else { $HOME }
 $ChatDir = Join-Path $HomeDir '.local-llm-setup\chat'   # where the chat page is written
@@ -402,6 +402,16 @@ function Write-ChatHtml {
   .capbtn:disabled { opacity: .5; cursor: default; }
   .caplink { background: none; border: none; color: var(--muted); font-size: 12px; cursor: pointer; text-decoration: underline; padding: 0; }
   .caplink:hover { color: var(--text-3); }
+  .datapick select { width: 100%; padding: 6px 9px; background: var(--surface-3); color: var(--text); border: 1px solid var(--border); border-radius: 8px; font-size: 13px; margin: 8px 0 4px; }
+  .datarows { margin: 2px 0 6px; border: 1px solid var(--border-subtle); border-radius: 8px; overflow: hidden; }
+  .datarow { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; padding: 6px 9px; border-top: 1px solid var(--border-subtle); font-size: 12.5px; color: var(--text-3); }
+  .datarow:first-child { border-top: none; }
+  .datacell { min-width: 0; word-break: break-word; }
+  .datid { color: var(--faint); font-family: ui-monospace, monospace; margin-right: 5px; }
+  .databtns { flex: none; white-space: nowrap; color: var(--muted); font-size: 12px; }
+  .dataedit { width: 100%; min-height: 92px; font-family: ui-monospace, monospace; font-size: 12px; background: var(--bg-deep); color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 8px; box-sizing: border-box; }
+  .dataerr { color: var(--danger); font-size: 12px; min-height: 14px; margin-top: 3px; }
+  .caplink.danger { color: var(--danger); }
   .capbar { height: 7px; max-width: 360px; background: var(--bg-deep); border: 1px solid var(--border-card); border-radius: 6px; overflow: hidden; }
   .capbar-fill { height: 100%; width: 0; background: linear-gradient(90deg,var(--accent),var(--ok-text)); transition: width .3s ease; }
   .pulllabel { font-size: 11.5px; color: var(--info-text); margin-top: 6px; font-variant-numeric: tabular-nums; }
@@ -649,6 +659,7 @@ function Write-ChatHtml {
       </span>
     </div>
     <div class="hgroup hright">
+      <button class="tbtn iconbtn" id="dataBtn" type="button" title="Data — view, edit &amp; delete what your deployed apps have stored: their collections and user accounts" aria-label="Deployed app data">&#128451;</button>
       <button class="tbtn iconbtn" id="goalsBtn" type="button" title="Goal limits — the honest record of what your local setup actually reached vs the ceiling it hit, from your goal runs" aria-label="Goal limits">&#127919;</button>
       <button class="tbtn iconbtn" id="themeBtn" type="button" title="Switch between dark and light" aria-label="Toggle dark / light theme">&#9790;</button>
       <button class="tbtn" id="dlBtn" title="Download the current app you've built as an .html file" disabled>Download</button>
@@ -718,6 +729,13 @@ function Write-ChatHtml {
     <div class="modal">
       <h3>&#127919; Goal limits <button class="mclose" id="goalsClose" title="Close">&times;</button></h3>
       <div class="mbody" id="goalsBody"></div>
+    </div>
+  </div>
+
+  <div class="modal-bg" id="dataModal" hidden>
+    <div class="modal">
+      <h3>&#128451; Data <button class="mclose" id="dataClose" title="Close">&times;</button></h3>
+      <div class="mbody" id="dataBody"></div>
     </div>
   </div>
 
@@ -822,6 +840,7 @@ const goalChk = el("goalChk"), goalLabel = el("goalLabel");
 const capBtn = el("capBtn"), capModal = el("capModal"), capClose = el("capClose"), capBody = el("capBody");
 const knowBtn = el("knowBtn"), knowledgeModal = el("knowledgeModal"), knowClose = el("knowClose"), knowBody = el("knowBody");
 const goalsBtn = el("goalsBtn"), goalsModal = el("goalsModal"), goalsClose = el("goalsClose"), goalsBody = el("goalsBody");
+const dataBtn = el("dataBtn"), dataModal = el("dataModal"), dataClose = el("dataClose"), dataBody = el("dataBody");
 
 let messages = [], busy = false, currentModel = "", currentApp = "", stick = true, buildingApp = false;
 let currentId = newId(), agentReady = false;
@@ -1061,7 +1080,7 @@ async function loadMcpTools() {
 }
 
 /* ---------- chat rendering ---------- */
-function escapeHtml(s) { return s.replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c])); }
+function escapeHtml(s) { return (s == null ? "" : String(s)).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
 function mdInline(s) {
   s = escapeHtml(s);
   s = s.replace(/`([^`]+)`/g, "<code>$1</code>");
@@ -2477,6 +2496,111 @@ async function renderGoals(){
   }).join("");
   goalsBody.innerHTML = summary + '<div class="caph">Runs (newest first)</div>' + rows;
 }
+
+/* ---------- 🗄️ Data: browse / edit a deployed app's stored data + user accounts ---------- */
+let _dataApps = [], _dataApp = null, _rows = {}, _users = null, _act = null;   // _act = {kind,col,id}
+function openData(){ dataModal.hidden = false; dataBody.innerHTML = '<div class="sysline">Loading…</div>'; _rows = {}; _users = null; _act = null; renderData(); }
+function closeData(){ dataModal.hidden = true; }
+async function dataPost(path, body){
+  return await (await fetch(AGENT_URL + "/api/agent/" + path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) })).json();
+}
+function _curApp(){ return _dataApps.find(a => a.slug === _dataApp); }
+async function renderData(){
+  if (!agentReady){ dataBody.innerHTML = '<div class="sysline">&#128451; Data needs the <code>--agent</code> server. Start it with <code>./local-llm-setup.sh --agent</code>, then reopen this.</div>'; return; }
+  let r = null; try { r = await dataPost("data/apps"); } catch (e) {}
+  _dataApps = (r && r.apps) || [];
+  if (!_dataApps.length){ dataBody.innerHTML = '<div class="sysline">No deployed app has stored data yet. Build an app that saves data or has logins, hit <b>&#128640; Deploy</b> and use it — then it shows up here.</div>'; return; }
+  const saved = localStorage.getItem("llm_data_app");
+  if (!_dataApp || !_dataApps.some(a => a.slug === _dataApp)) _dataApp = _dataApps.some(a => a.slug === saved) ? saved : _dataApps[0].slug;
+  const opts = _dataApps.map(a => '<option value="' + escapeHtml(a.slug) + '"' + (a.slug === _dataApp ? ' selected' : '') + '>'
+    + escapeHtml(a.name) + ' · ' + a.collections.length + ' coll · ' + a.users + ' user' + (a.users === 1 ? '' : 's') + ' · ' + (a.running ? 'running' : 'stopped') + '</option>').join('');
+  dataBody.innerHTML = '<div class="sysline">Browse and edit what your deployed apps have saved. <a class="caplink" data-act="refresh">↻ Refresh</a></div>'
+    + '<div class="datapick"><select id="dataSel">' + opts + '</select></div><div id="dataDetail"></div>';
+  el("dataSel").addEventListener("change", e => { _dataApp = e.target.value; _rows = {}; _users = null; _act = null; renderApp(); loadUsers(); });
+  renderApp(); loadUsers();
+}
+function renderApp(){
+  const app = _curApp(), det = el("dataDetail"); if (!app || !det) return;
+  localStorage.setItem("llm_data_app", _dataApp);
+  let h = app.running ? '<div class="sysline">⚠️ This app is live right now — edits here take effect immediately for anyone using it.</div>' : '';
+  h += '<div class="caph">Collections</div>';
+  h += app.collections.length ? app.collections.map(c => _collHtml(app, c)).join('') : '<div class="sysline">No collections yet.</div>';
+  h += '<div class="caph">User accounts</div><div id="dataUsers">' + (_users === null ? '<div class="sysline">Loading…</div>' : _usersHtml(_users)) + '</div>';
+  det.innerHTML = h;
+}
+function _collHtml(app, c){
+  const open = !!_rows[c.name], dot = app.running ? 'live' : 'avail';
+  return '<div class="caprow ' + dot + '"><span class="st"><i class="dt ' + dot + '"></i></span>'
+    + '<div class="cn"><b>' + escapeHtml(c.name) + '</b><div class="sub">' + c.count + ' row' + (c.count === 1 ? '' : 's') + '</div></div>'
+    + '<div class="right"><a class="caplink" data-act="toggle" data-col="' + escapeHtml(c.name) + '">' + (open ? 'Hide' : 'Show') + '</a></div></div>'
+    + (open ? '<div class="datarows">' + _rowsHtml(c.name) + '</div>' : '');
+}
+function _rowsHtml(col){
+  const r = _rows[col]; if (!r) return '';
+  if (!r.data.length) return '<div class="datarow">No rows in this collection.</div>';
+  let out = r.data.map(row => {
+    if (_act && _act.kind === 'edit' && _act.col === col && _act.id === row.id){
+      const body = Object.assign({}, row); delete body.id;
+      return '<div class="datarow" style="display:block"><textarea class="dataedit" data-id="' + row.id + '">' + escapeHtml(JSON.stringify(body, null, 2)) + '</textarea>'
+        + '<div class="dataerr" data-id="' + row.id + '"></div>'
+        + '<div class="databtns"><a class="caplink" data-act="save" data-col="' + escapeHtml(col) + '" data-id="' + row.id + '">Save</a> · <a class="caplink" data-act="cancel">Cancel</a></div></div>';
+    }
+    const fields = Object.keys(row).filter(k => k !== 'id').slice(0, 6).map(k => '<b>' + escapeHtml(k) + ':</b> ' + escapeHtml(String(row[k])).slice(0, 80)).join('  ') || '(empty)';
+    const confirming = _act && _act.kind === 'del' && _act.col === col && _act.id === row.id;
+    return '<div class="datarow"><div class="datacell"><span class="datid">#' + row.id + '</span>' + fields + '</div>'
+      + '<div class="databtns">' + (confirming
+        ? 'delete #' + row.id + '? <a class="caplink danger" data-act="delyes" data-col="' + escapeHtml(col) + '" data-id="' + row.id + '">Delete</a> · <a class="caplink" data-act="cancel">Cancel</a>'
+        : '<a class="caplink" data-act="edit" data-col="' + escapeHtml(col) + '" data-id="' + row.id + '">Edit</a> · <a class="caplink" data-act="del" data-col="' + escapeHtml(col) + '" data-id="' + row.id + '">Delete</a>') + '</div></div>';
+  }).join('');
+  if (r.total > r.data.length) out += '<div class="datarow">Showing ' + r.data.length + ' of ' + r.total + ' rows.</div>';
+  return out;
+}
+function _usersHtml(users){
+  if (!users.length) return '<div class="sysline">No user accounts.</div>';
+  return users.map(u => {
+    const confirming = _act && _act.kind === 'userdel' && _act.id === u.id;
+    return '<div class="datarow"><div class="datacell"><span class="datid">#' + u.id + '</span><b>' + escapeHtml(u.username) + '</b> · ' + u.sessions + ' session' + (u.sessions === 1 ? '' : 's') + '</div>'
+      + '<div class="databtns">' + (confirming
+        ? 'remove ' + escapeHtml(u.username) + ' &amp; sign out? <a class="caplink danger" data-act="userdelyes" data-id="' + u.id + '">Remove</a> · <a class="caplink" data-act="cancel">Cancel</a>'
+        : '<a class="caplink" data-act="userdel" data-id="' + u.id + '">Remove</a>') + '</div></div>';
+  }).join('') + '<div class="sysline">Passwords are never shown — stored only as salted PBKDF2 hashes.</div>';
+}
+async function loadUsers(){ if (!_curApp()) return; try { const r = await dataPost("data/users", { slug: _dataApp }); _users = (r && r.users) || []; } catch (e) { _users = []; } const u = el("dataUsers"); if (u) u.innerHTML = _usersHtml(_users); }
+// First-page preview only: the server caps a collection at 200 rows and reports the true total
+// (rendered as "Showing 200 of N"). The browser is an inspector, not a full pager, so it doesn't request later offsets.
+async function loadRows(col){ try { const r = await dataPost("data/rows", { slug: _dataApp, collection: col }); _rows[col] = (r && r.ok) ? r : { data: [], total: 0 }; } catch (e) { _rows[col] = { data: [], total: 0 }; } renderApp(); }
+dataBody.addEventListener("click", async e => {
+  const t = e.target.closest("[data-act]"); if (!t) return;
+  e.preventDefault();
+  const act = t.dataset.act, col = t.dataset.col, id = t.dataset.id ? +t.dataset.id : null;
+  if (act === "refresh"){ _rows = {}; _users = null; _act = null; renderData(); }
+  else if (act === "toggle"){ if (_rows[col]) { delete _rows[col]; renderApp(); } else loadRows(col); }
+  else if (act === "edit"){ _act = { kind: "edit", col, id }; renderApp(); }
+  else if (act === "cancel"){ _act = null; renderApp(); }
+  else if (act === "del"){ _act = { kind: "del", col, id }; renderApp(); }
+  else if (act === "userdel"){ _act = { kind: "userdel", id }; renderApp(); }
+  else if (act === "save"){
+    const ta = dataBody.querySelector('textarea.dataedit[data-id="' + id + '"]'), ed = dataBody.querySelector('.dataerr[data-id="' + id + '"]');
+    if (!ta) return;
+    let body; try { body = JSON.parse(ta.value); } catch (err) { if (ed) ed.textContent = "Not valid JSON — fix it and Save again."; return; }
+    if (Object.prototype.toString.call(body) !== "[object Object]"){ if (ed) ed.textContent = "Must be a JSON object { … }."; return; }
+    const r = await dataPost("data/update", { slug: _dataApp, collection: col, id, body });
+    if (!r.ok){ if (ed) ed.textContent = r.error || "Save failed."; return; }
+    _act = null; await loadRows(col);
+  }
+  else if (act === "delyes"){
+    const r = await dataPost("data/delete", { slug: _dataApp, collection: col, id });
+    if (r && r.ok && r.deleted){ const app = _curApp(), cc = app && app.collections.find(c => c.name === col); if (cc) cc.count = Math.max(0, cc.count - 1); }
+    _act = null; await loadRows(col);
+  }
+  else if (act === "userdelyes"){
+    const r = await dataPost("data/userdelete", { slug: _dataApp, id });
+    if (r && r.ok && r.deleted){ const app = _curApp(); if (app) app.users = Math.max(0, app.users - 1); }
+    _act = null; await loadUsers();
+  }
+});
+dataModal.addEventListener("click", e => { if (e.target === dataModal) closeData(); });
+document.addEventListener("keydown", e => { if (e.key === "Escape" && !dataModal.hidden) closeData(); });
 async function renderKnowledge(){
   const a = (typeof agentReady !== "undefined") && agentReady;
   if (!a){ knowBody.innerHTML = '<div class="sysline">📚 Knowledge needs the <code>--agent</code> server. Start it with <code>./local-llm-setup.sh --agent</code>, then reopen this.</div>'; return; }
@@ -2552,6 +2676,8 @@ knowBtn.addEventListener("click", openKnowledge);
 knowClose.addEventListener("click", closeKnowledge);
 goalsBtn.addEventListener("click", openGoals);
 goalsClose.addEventListener("click", closeGoals);
+dataBtn.addEventListener("click", openData);
+dataClose.addEventListener("click", closeData);
 knowledgeModal.addEventListener("click", e => { if (e.target === knowledgeModal) closeKnowledge(); });
 document.addEventListener("keydown", e => { if (e.key === "Escape" && !knowledgeModal.hidden) closeKnowledge(); });
 
@@ -2795,11 +2921,19 @@ def _data_doc(rid, body):
     d = body if isinstance(body, dict) else {"value": body}
     return {**d, "id": int(rid)}
 
+def _safe_json(b):
+    """Decode a stored row body, tolerating a corrupt/hand-edited one (the data browser
+    inspects arbitrary deployed-app DBs — one bad row must not hide the whole collection)."""
+    try:
+        return json.loads(b or "{}")
+    except Exception:
+        return {"_raw": (b if isinstance(b, str) else ""), "_decode_error": True}
+
 def data_list(db_path, col):
     db = _data_open(db_path)
     rows = db.execute("SELECT id, body FROM docs WHERE collection=? ORDER BY id", (_data_col(col),)).fetchall()
     db.close()
-    return [_data_doc(i, json.loads(b or "{}")) for i, b in rows]
+    return [_data_doc(i, _safe_json(b)) for i, b in rows]
 
 def data_create(db_path, col, body):
     db = _data_open(db_path); now = time.time()
@@ -3078,6 +3212,101 @@ def deploy_stop(name):
     with _DEPLOYS_LOCK:
         stopped = _stop_locked(slug)
     return {"ok": True, "stopped": stopped, "slug": slug}
+
+# ---------- data browser: read/edit a DEPLOYED app's DB from the builder ----------
+# Powers the 🗄️ Data panel. Apps are enumerated from the FILESYSTEM (the per-app <slug>.db
+# files persist after a deploy stops), opened READ-ONLY for browsing and checked against
+# sqlite_master BEFORE any SELECT — so we never auto-create phantom tables in an app's DB.
+# Every endpoint is origin-locked (POST-only) and NEVER returns a password hash or token.
+def _deploy_db(slug):
+    """The path-safe <slug>.db under DEPLOY_DIR, or raise — neutralises '../', absolute paths, etc."""
+    p = os.path.realpath(os.path.join(DEPLOY_DIR, _slug(slug) + ".db"))
+    if os.path.dirname(p) != DEPLOY_DIR or not p.endswith(".db") or not os.path.isfile(p):
+        raise ValueError("no such app data")
+    return p
+
+def _db_ro(db_path):
+    return sqlite3.connect("file:%s?mode=ro" % db_path, uri=True, timeout=5)
+
+def _db_has_table(db, name):
+    return db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)).fetchone() is not None
+
+def _has_table_ro(db_path, name):
+    """Does this app DB already have <name>? Read-only — never creates it (keeps the
+    write endpoints from injecting a phantom table into an app that doesn't use it)."""
+    db = _db_ro(db_path)
+    try:
+        return _db_has_table(db, name)
+    finally:
+        db.close()
+
+def _db_overview(db_path):
+    """Collections (+ row counts) and user count for one app DB — read-only, never creates a table."""
+    db = _db_ro(db_path)
+    try:
+        has_docs, has_users = _db_has_table(db, "docs"), _db_has_table(db, "users")
+        collections = ([{"name": n, "count": c} for n, c in
+                        db.execute("SELECT collection, COUNT(*) FROM docs GROUP BY collection ORDER BY collection")]
+                       if has_docs else [])
+        users = db.execute("SELECT COUNT(*) FROM users").fetchone()[0] if has_users else 0
+        return {"has_docs": has_docs, "has_users": has_users, "collections": collections, "users": users}
+    finally:
+        db.close()
+
+def _db_apps():
+    """Every deployed app that has a DB (from the filesystem), annotated running/url from _DEPLOYS."""
+    with _DEPLOYS_LOCK:
+        live = {s: {"name": d["name"], "url": _deploy_url(d["host"], d["port"])} for s, d in _DEPLOYS.items()}
+    apps = []
+    for path in sorted(glob.glob(os.path.join(DEPLOY_DIR, "*.db"))):
+        slug = os.path.basename(path)[:-3]
+        try:
+            ov = _db_overview(path)
+        except Exception:
+            continue
+        l = live.get(slug)
+        apps.append({"slug": slug, "name": (l or {}).get("name", slug), "running": bool(l),
+                     "url": (l or {}).get("url"), **ov})
+    return {"ok": True, "apps": apps}
+
+def data_rows(db_path, col, limit=200, offset=0):
+    """A paginated, read-only page of one collection's rows + the total count."""
+    col = _data_col(col)
+    limit = max(1, min(int(limit or 200), 1000)); offset = max(0, int(offset or 0))
+    db = _db_ro(db_path)
+    try:
+        if not _db_has_table(db, "docs"):
+            return {"total": 0, "data": []}
+        total = db.execute("SELECT COUNT(*) FROM docs WHERE collection=?", (col,)).fetchone()[0]
+        rows = db.execute("SELECT id, body FROM docs WHERE collection=? ORDER BY id LIMIT ? OFFSET ?",
+                          (col, limit, offset)).fetchall()
+        return {"total": total, "data": [_data_doc(i, _safe_json(b)) for i, b in rows]}
+    finally:
+        db.close()
+
+def auth_users(db_path):
+    """An app's accounts — EXACTLY id, username, created + live-session count. NEVER salt/pwhash/token."""
+    db = _db_ro(db_path)
+    try:
+        if not _db_has_table(db, "users"):
+            return []
+        sess = "(SELECT COUNT(*) FROM sessions s WHERE s.user_id=u.id)" if _db_has_table(db, "sessions") else "0"
+        rows = db.execute("SELECT u.id, u.username, u.created, " + sess + " FROM users u ORDER BY u.id").fetchall()
+        return [{"id": i, "username": un, "created": c, "sessions": sc} for i, un, c, sc in rows]
+    finally:
+        db.close()
+
+def auth_delete_user(db_path, uid):
+    """Delete a user AND cascade their sessions in one transaction (their cookie stops working at once)."""
+    db = sqlite3.connect(db_path, timeout=5)
+    try:
+        cur = db.execute("DELETE FROM users WHERE id=?", (int(uid),))
+        if _db_has_table(db, "sessions"):
+            db.execute("DELETE FROM sessions WHERE user_id=?", (int(uid),))
+        db.commit()
+        return cur.rowcount > 0
+    finally:
+        db.close()
 
 # ---------- MCP client (stdlib stdio JSON-RPC; connect local MCP servers as tools) ----------
 # Connect the local agent to Model Context Protocol servers — the 2025/26 standard for
@@ -4515,6 +4744,65 @@ class H(BaseHTTPRequestHandler):
             try:
                 return self._json(200, mcp_call(req.get("server"), req.get("tool"),
                                                 req.get("arguments") or req.get("args") or {}))
+            except Exception as e:
+                return self._json(200, {"ok": False, "error": str(e)})
+        if path.startswith("/api/agent/data/apps"):
+            try:
+                return self._json(200, _db_apps())
+            except Exception as e:
+                return self._json(200, {"ok": False, "error": str(e)})
+        if path.startswith("/api/agent/data/rows"):
+            try:
+                db = _deploy_db((req.get("slug") or "").strip())
+                return self._json(200, {"ok": True, **data_rows(db, req.get("collection") or "",
+                                                                req.get("limit", 200), req.get("offset", 0))})
+            except Exception as e:
+                return self._json(200, {"ok": False, "error": str(e)})
+        if path.startswith("/api/agent/data/update"):
+            try:
+                db = _deploy_db((req.get("slug") or "").strip())
+                rid = req.get("id")
+                if rid is None:
+                    raise ValueError("row id is required")
+                body = req.get("body")
+                if not isinstance(body, dict):
+                    raise ValueError("row body must be a JSON object")
+                if len(json.dumps(body)) > 262144:
+                    raise ValueError("row body too large (max 256 KB)")
+                d = data_update(db, req.get("collection") or "", int(rid), body) if _has_table_ro(db, "docs") else None
+                return self._json(200, {"ok": bool(d), "data": d})
+            except sqlite3.OperationalError:
+                return self._json(200, {"ok": False, "error": "app is busy — try again"})
+            except Exception as e:
+                return self._json(200, {"ok": False, "error": str(e)})
+        if path.startswith("/api/agent/data/delete"):
+            try:
+                db = _deploy_db((req.get("slug") or "").strip())
+                rid = req.get("id")
+                if rid is None:
+                    raise ValueError("row id is required")
+                deleted = data_delete(db, req.get("collection") or "", int(rid)) if _has_table_ro(db, "docs") else False
+                return self._json(200, {"ok": True, "deleted": deleted})
+            except sqlite3.OperationalError:
+                return self._json(200, {"ok": False, "error": "app is busy — try again"})
+            except Exception as e:
+                return self._json(200, {"ok": False, "error": str(e)})
+        if path.startswith("/api/agent/data/userdelete"):
+            try:
+                db = _deploy_db((req.get("slug") or "").strip())
+                rid = req.get("id")
+                if rid is None:
+                    raise ValueError("user id is required")
+                deleted = auth_delete_user(db, int(rid)) if _has_table_ro(db, "users") else False
+                return self._json(200, {"ok": True, "deleted": deleted})
+            except sqlite3.OperationalError:
+                return self._json(200, {"ok": False, "error": "app is busy — try again"})
+            except Exception as e:
+                return self._json(200, {"ok": False, "error": str(e)})
+        if path.startswith("/api/agent/data/users"):
+            try:
+                db = _deploy_db((req.get("slug") or "").strip())
+                return self._json(200, {"ok": True, "users": auth_users(db)})
             except Exception as e:
                 return self._json(200, {"ok": False, "error": str(e)})
         if path.startswith("/api/agent/inspect"):
