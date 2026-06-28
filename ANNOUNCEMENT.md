@@ -1,40 +1,54 @@
-# 📣 The local builder can now SEE
+# 📣 Your locally-built apps just got a backend
 
 `local-llm-setup` turns one command into a private, on-device AI dev environment: Ollama + the
-right coder/reasoner models for your machine, plus a Lovable/Bolt-style app builder with live
+right coder/reasoner models for your machine, plus a Lovable/v0-style app builder with live
 preview — running **100% locally**. No cloud, no API keys, no per-token bill.
 
-> *A point-in-time announcement (the vision-model release). For everything shipped since — keyless web search, one-click local deploy, MCP support, a goal-limits dashboard, and a full local backend for deployed apps (database + auth + a 🗄️ Data browser) — see [CHANGELOG.md](CHANGELOG.md).*
+The headline of this wave: **the apps you build now get a real backend — and it never leaves your
+machine.**
 
-This release gave that builder **eyes**.
+## 🗄️ Build a real app, deploy it locally, and it remembers
 
-## ✨ What's new
+Build an app from a chat box, hit **🚀 Deploy**, and it comes up on a real local URL with a real
+backend — **zero setup, no config, no cloud**:
 
-### One-click vision model
-Open **🧩 Capabilities** in the builder and click **Install** on the vision model — it streams the
-download with a live progress bar and flips to **✓ Installed** on its own. No terminal. Clear,
-colour-coded status now shows exactly what's installed and usable *right now*.
+- **A database** — a SQLite-backed JSON store (`/api/data/<collection>`), so a todo list, notes app
+  or guestbook actually *persists* across visits.
+- **Real logins** — signup / login / sessions (`/api/auth/…`), with **PBKDF2-hashed** passwords and
+  **HttpOnly, SameSite=Strict** cookies.
+- **A 🗄️ Data panel** in the builder to browse, edit and clean it all — collections row-by-row and
+  user accounts (passwords are never shown).
 
-### The vision-critique clone loop
-Cloning a website used to be **structural only** — the builder read the page into a text digest
-(palette, fonts, sections, copy) and rebuilt from that. Accurate, but blind to pixels.
+It's stdlib SQLite, **same-origin**, bound to localhost — **secure by construction**: no CORS, the
+raw database is never web-served, and removing a user signs them out everywhere. Just ask for
+*"a notes app with logins that saves my notes,"* deploy it, and it works.
+(Full reference: **[docs/backend.md](docs/backend.md)**.)
 
-Now, with a vision model installed, every clone gets a **visual pass**: the builder screenshots
-**your clone beside the original**, a local vision model (`qwen2.5vl:7b`) names the visual gaps —
-layout, spacing, colour, typography, missing sections — and the coder applies them and re-renders,
-keeping the highest-scoring version. It's the lever past the text-only plateau, and it runs
-entirely on your machine.
+## ✨ The rest of the wave
+
+- 🔎 **Keyless web search** — the builder can look things up (DuckDuckGo by default, or point it at
+  your own self-hosted SearXNG). No API key.
+- 🚀 **One-click local deploy** — your app on a real `http://` URL that keeps running after you close
+  the builder; the agent can build *and* deploy in one turn.
+- 🔌 **MCP support** — connect Model Context Protocol servers (filesystem, git, search, your own) and
+  the agent uses their tools. **Parity with Claude Code, fully local.**
+- 🎯 **Goal-limits dashboard** — the honest record of what your local setup actually reaches per task.
+- 📚 **Visual RAG** — add pages/images and ask questions answered from how they *look*, not just their
+  text.
 
 ## 🔒 Why it matters
-Everything stays on your hardware — no prompt leaves your laptop — and the builder can now look at
-a real site and improve its own work toward it.
+
+Every other local app-builder is BYO-API-key, and the apps they generate forget everything. This is
+keyless and offline by default — and now the apps you build can be *real* (data, accounts, the lot)
+without anything ever leaving your hardware.
 
 ## 🚀 Try it
-One command (macOS / Linux / Windows) — see the [README](README.md). Then open the builder, click
-**🧩 Capabilities → Install vision model**, and ask it to `clone <your-favourite-site>`.
 
-> **Honest note:** these are local 7B/14B models — expect *meaningfully close*, not pixel-perfect,
-> and the vision loop adds a couple of minutes per clone (it swaps models per round on 24 GB). The
-> win: genuinely useful, genuinely private, genuinely yours.
+One command (macOS / Linux / native Windows) — see the **[README](README.md)**. Then open the builder
+(`./local-llm-setup.sh --agent`), build something that saves data, and hit **🚀 Deploy**.
 
-*Details and the implementation gotchas: [docs/vision-model.md](docs/vision-model.md). Full history: [CHANGELOG.md](CHANGELOG.md).*
+> **Honest note:** this is your machine's backend, not a hosted one — to put an app on the public
+> internet you bring your own host. And we keep an honest scorecard: multi-file projects, image
+> generation, and arbitrary server-side logic are the next frontiers, not faked.
+
+*Full history: **[CHANGELOG.md](CHANGELOG.md)**.*
