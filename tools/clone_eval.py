@@ -25,13 +25,52 @@ OLLAMA = os.environ.get("OLLAMA", "http://localhost:11434")
 WORKSPACE = os.path.expanduser("~/.local-llm-setup/workspace")
 SHOTS = os.path.join(WORKSPACE, "shots")
 
+_GOLD_CLONE = r'''<!doctype html><html class="dark"><head><meta charset="utf-8">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
+<style>body{font-family:'Inter',system-ui,sans-serif}</style></head>
+<body class="bg-[#0a0a0a] text-[#ededed]">
+<header class="flex items-center justify-between px-8 py-5 border-b border-[#191919]">
+  <span class="text-xl font-extrabold text-[#f3d5ba]">BrandName</span>
+  <nav class="hidden md:flex gap-8 text-sm text-[#a1a1a1]"><a href="#">Product</a><a href="#">Pricing</a><a href="#">About</a></nav>
+  <a class="bg-[#f3d5ba] text-[#0a0a0a] px-4 py-2 rounded-md text-sm font-semibold">Get started</a>
+</header>
+<section class="relative min-h-[70vh] flex items-center">
+  <img src="https://picsum.photos/seed/hero/1600/900" class="absolute inset-0 w-full h-full object-cover opacity-40" alt="">
+  <div class="relative z-10 max-w-3xl px-8">
+    <h1 class="text-5xl md:text-6xl font-extrabold leading-tight">The exact hero headline</h1>
+    <p class="mt-6 text-lg text-[#a1a1a1]">The real subheading copy, transcribed verbatim.</p>
+    <div class="mt-8 flex gap-4"><a class="bg-[#f3d5ba] text-[#0a0a0a] px-6 py-3 rounded-md font-semibold">Primary CTA</a><a class="border border-[#191919] px-6 py-3 rounded-md">Secondary</a></div>
+  </div>
+</section>
+<section class="px-8 py-20 max-w-6xl mx-auto">
+  <h2 class="text-3xl font-bold mb-12">Real features heading</h2>
+  <div class="grid md:grid-cols-3 gap-8">
+    <div class="p-6 rounded-xl border border-[#191919] bg-[#111111]"><h3 class="font-semibold text-lg mb-2">Feature one</h3><p class="text-[#a1a1a1]">Real copy.</p></div>
+    <div class="p-6 rounded-xl border border-[#191919] bg-[#111111]"><h3 class="font-semibold text-lg mb-2">Feature two</h3><p class="text-[#a1a1a1]">Real copy.</p></div>
+    <div class="p-6 rounded-xl border border-[#191919] bg-[#111111]"><h3 class="font-semibold text-lg mb-2">Feature three</h3><p class="text-[#a1a1a1]">Real copy.</p></div>
+  </div>
+</section>
+<footer class="px-8 py-12 border-t border-[#191919] text-sm text-[#a1a1a1] flex justify-between"><span>© BrandName</span><div class="flex gap-6"><a href="#">Terms</a><a href="#">Privacy</a></div></footer>
+</body></html>'''
+
 BUILDER_SYSTEM = (
-    "You are a local web-app builder. Tailwind CSS is loaded in the preview — use Tailwind utility "
-    "classes freely. Recreate the requested page as ONE complete, self-contained HTML file in a single "
-    "```html code block (inline any extra CSS/JS). Match the real colours, fonts, section order and copy "
-    "given to you exactly — transcribe, don't invent. For images use https://picsum.photos/seed/NAME/W/H. "
-    "Give a hero/section with a background image a real height (min-h-[70vh]) with the image as an absolute "
-    "inset-0 object-cover layer behind a relative z-10 container; set explicit text colours."
+    "You are a meticulous web-page cloner. Output ONE complete, self-contained HTML file in a single "
+    "```html code block (inline any extra CSS/JS), using Tailwind utility classes (Tailwind is loaded). "
+    "Recreate the page FAITHFULLY and COMPLETELY: implement EVERY section you are given, in order, each as "
+    "a full block with its real heading and copy — never summarise, never shorten, never leave a placeholder "
+    "like '<!-- features here -->'. A thin or partial page is a FAILURE; aim for a thorough recreation "
+    "(a real landing page is typically 200+ lines). "
+    "Use the EXACT colours provided, applied to the right elements as Tailwind arbitrary values "
+    "(e.g. bg-[#0a0a0a], text-[#f3d5ba], border-[#191919]) — every listed colour MUST appear in the output. "
+    "Match the fonts (load via Google Fonts if needed), the section order, the spacing and the visual hierarchy. "
+    "For images use the real URLs if given, else https://picsum.photos/seed/NAME/W/H. Give a hero/section with "
+    "a background image a real height (min-h-[70vh]) with the image as an absolute inset-0 object-cover layer "
+    "behind a relative z-10 container; always set explicit text colours so nothing is invisible."
+    "\n\nHere is a clone done RIGHT — study how it applies exact colours as Tailwind arbitrary values, builds a "
+    "hero with an image overlay, a real multi-card features grid and a footer, with NO placeholders. Produce "
+    "output of at least this completeness, then REPLACE every placeholder (BrandName, the headings/copy, and the "
+    "example colours #0a0a0a/#f3d5ba/#191919/#a1a1a1/#ededed) with the REAL values from the spec you are given:\n"
+    "```html\n" + _GOLD_CLONE + "\n```"
 )
 
 # ---------- http helpers ----------
@@ -47,6 +86,8 @@ def agent(ep, obj, timeout=90):
 def ollama(model, system, user, timeout=600):
     out = _post(f"{OLLAMA}/api/chat",
                 {"model": model, "stream": False,
+                 # low temp = less run-to-run variance (the reliability lever); 8k ctx + room to finish
+                 "options": {"temperature": 0.2, "top_p": 0.9, "num_ctx": 8192, "num_predict": 4096},
                  "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}]},
                 timeout)
     return out.get("message", {}).get("content", "")
@@ -120,10 +161,10 @@ def clone_spec(d):
     if d.get("theme") == "dark": L.append("IMPORTANT — this is a DARK page: near-black background (bg-zinc-950/bg-black, add class='dark' to <html>) with light text. Do NOT produce a white page.")
     elif d.get("theme") == "light": L.append("Light-themed page: light background with dark text.")
     if d.get("description"): L.append("Tagline: " + d["description"])
-    if d.get("palette"): L.append("Use THESE exact colours: " + ", ".join(d["palette"][:12]))
+    if d.get("palette"): L.append("MUST use ALL of these exact colours (as Tailwind arbitrary values like bg-[#hex]/text-[#hex]) — every one has to appear in the output: " + ", ".join(d["palette"][:12]))
     if d.get("fonts"): L.append("Use THESE fonts (Google Fonts if needed): " + " · ".join(d["fonts"][:6]))
     secs = d.get("sections") or []
-    if secs: L.append("Section order: " + " > ".join((s.get("tag", "") + ("#" + s["id"] if s.get("id") else "")) for s in secs[:14]))
+    if secs: L.append("Implement ALL of these sections, each as its own full block, in this exact order: " + " > ".join((s.get("tag", "") + ("#" + s["id"] if s.get("id") else "")) for s in secs[:14]))
     heads = d.get("headings") or []
     if heads: L.append("Headings/copy to reuse:\n" + "\n".join("- " + h.get("text", "") for h in heads[:16]))
     nav = [l.get("text", "") for l in (d.get("nav_links") or []) if l.get("text")][:8]
@@ -137,7 +178,8 @@ def clone_spec(d):
         if bgs: L.append("Background images (hero/sections): " + "  ·  ".join(bgs[:5]))
         if imgs: L.append("<img> sources in document order: " + "  ·  ".join(imgs[:12]))
         L.append("If a real image fails to load, fall back to https://picsum.photos/seed/NAME/W/H.")
-    L.append("Match layout, spacing and visual hierarchy as closely as possible. Responsive.")
+    L.append("Match layout, spacing and visual hierarchy as closely as possible. Responsive. "
+             "Be COMPLETE — implement every section fully with real content; a short or partial page scores poorly.")
     return "\n".join(L)
 
 def extract_html(txt):

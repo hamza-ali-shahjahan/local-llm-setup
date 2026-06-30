@@ -45,7 +45,7 @@ param(
   [switch]$Help
 )
 
-$AppVersion = '1.28.1'   # NB: not $Version — that name is the -Version switch param
+$AppVersion = '1.28.2'   # NB: not $Version — that name is the -Version switch param
 $Ctx = 8192             # default context window — big enough for real work, light on RAM
 $HomeDir = if ($env:USERPROFILE) { $env:USERPROFILE } else { $HOME }
 $ChatDir = Join-Path $HomeDir '.local-llm-setup\chat'   # where the chat page is written
@@ -764,7 +764,12 @@ const AGENT_URL = location.origin;   // the page is served by the agent server (
 const BUILDER_SYSTEM =
   "You are a local web-app builder, like Lovable or v0, running on the user's machine. " +
   "Tailwind CSS and a shadcn-style design system are ALREADY loaded in the preview, so use Tailwind utility " +
-  "classes freely — do NOT add the Tailwind CDN or a tailwind config yourself. Lean on the design tokens for a " +
+  "classes freely — do NOT add the Tailwind CDN or a tailwind config yourself. " +
+  "CRITICAL: apply every style as a Tailwind utility class IN THE class ATTRIBUTE of the element " +
+  "(e.g. <section class='bg-[#0a0a0a] min-h-[70vh] text-[#f3d5ba]'>). NEVER write a Tailwind class name as a CSS " +
+  "value — writing background-color: bg-zinc-950 or min-height: [70vh] inside a <style> block is INVALID and is " +
+  "silently dropped (you get NO background, NO height). If you use a <style> block at all, write real CSS only " +
+  "(background-color: #0a0a0a). Lean on the design tokens for a " +
   "clean, modern look: bg-background / text-foreground, bg-card, text-muted-foreground, border, rounded-lg / rounded-xl, " +
   "For a DARK theme, add class=\"dark\" to the <html> tag — the tokens switch to dark automatically (keep using bg-background / bg-card / text-foreground). " +
   "For a coloured accent (e.g. purple, emerald), use a literal Tailwind class on the key elements, like bg-purple-600 / hover:bg-purple-700 on buttons. " +
@@ -936,7 +941,8 @@ async function pageTheme(url) {
 // tell it plainly these are the priority. Focused input is what the model actually reproduces.
 function cloneSpecFromDigest(d) {
   const L = ["Recreate this web page as ONE self-contained, responsive HTML file: " + (d.title || d.url) + ".",
-             "Fidelity to the ORIGINAL is the goal — use its EXACT colours, fonts, section order and copy below. Implement EVERY colour and font listed; they are the highest-priority detail, not suggestions."];
+             "Fidelity to the ORIGINAL is the goal — use its EXACT colours, fonts, section order and copy below. Implement EVERY colour and font listed; they are the highest-priority detail, not suggestions.",
+             "Be COMPLETE: implement EVERY section as a full block with its real heading and copy — never a placeholder, never summarised. A thin or partial page is a failure (a real landing page is 200+ lines)."];
   if (d.theme === "dark") L.push("Theme: DARK — near-black background throughout (add class=\"dark\" to <html>; bg-zinc-950 / bg-black on body + sections) with light text. Never a white page.");
   else if (d.theme === "light") L.push("Theme: light background, dark text.");
   if (d.description) L.push("Tagline: " + d.description);
@@ -1775,14 +1781,18 @@ async function runTool(tool) {
 
 /* ---------- the model call ---------- */
 const CLONE_CTX = 16384;   // clone gen/refine context window — room for the full render-based spec AND a complete HTML file out (8k truncated both)
+const CLONE_TEMP = 0.2;    // low temperature on clones — fidelity is reproduction, not creativity; cuts the run-to-run variance that made clones unreliable
 async function callModel(onTok, signal, opts) {
   opts = opts || {};
   const sys = opts.system || (agentChk.checked ? (AGENT_SYSTEM + mcpPrompt) : BUILDER_SYSTEM);
   const model = opts.model || currentModel;
   const msgs = opts.messages || messages;
   const num_ctx = opts.num_ctx || 0;   // bigger window when the caller asks for it (clones)
+  const opt = {};
+  if (num_ctx) opt.num_ctx = num_ctx;
+  if (opts.temperature != null) opt.temperature = opts.temperature;   // low temp on clones = far less variance
   const resp = await fetch(API + "/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, signal,
-    body: JSON.stringify({ model, stream: true, messages: [{ role: "system", content: sys }, ...msgs], ...(num_ctx ? { options: { num_ctx } } : {}) }) });
+    body: JSON.stringify({ model, stream: true, messages: [{ role: "system", content: sys }, ...msgs], ...(Object.keys(opt).length ? { options: opt } : {}) }) });
   const reader = resp.body.getReader(); const dec = new TextDecoder(); let buf = "", acc = "";
   while (true) {
     const { done, value } = await reader.read(); if (done) break;
@@ -1935,7 +1945,7 @@ async function send() {
       } else {
         sys = spec ? (BUILDER_SYSTEM + "\n\nBuild to THIS spec — implement every point:\n" + spec) : BUILDER_SYSTEM;
       }
-      const acc = await callModel(t => displayStreaming(body, t, sid), abortCtl.signal, { model: r.model, system: sys, messages: callMsgs, num_ctx: r.cloneUrl ? CLONE_CTX : 0 });
+      const acc = await callModel(t => displayStreaming(body, t, sid), abortCtl.signal, { model: r.model, system: sys, messages: callMsgs, num_ctx: r.cloneUrl ? CLONE_CTX : 0, temperature: r.cloneUrl ? CLONE_TEMP : undefined });
       sessionMessages.push({ role: "assistant", content: acc });
       const app = extractApp(acc);
       if (app) {
@@ -2044,7 +2054,7 @@ async function send() {
                 showTab("code"); scrollDown();
                 const facc = await callModel(t => displayStreaming(body, t, sid), abortCtl.signal,
                   { model: r.model, system: BUILDER_SYSTEM + "\n\nThis is a fidelity FIX of a clone you built earlier (shown above). Output the COMPLETE updated HTML file.",
-                    messages: sessionMessages.concat([{ role: "user", content: improvePrompt(sc) }]), num_ctx: CLONE_CTX });
+                    messages: sessionMessages.concat([{ role: "user", content: improvePrompt(sc) }]), num_ctx: CLONE_CTX, temperature: CLONE_TEMP });
                 const fapp = extractApp(facc);
                 if (!fapp) break;
                 sessionMessages[sessionMessages.length - 1] = { role: "assistant", content: facc };   // canonical app = refined
@@ -2090,7 +2100,7 @@ async function send() {
                     showTab("code"); scrollDown();
                     const vacc = await callModel(t => displayStreaming(body, t, sid), abortCtl.signal,
                       { model: r.model, system: BUILDER_SYSTEM + "\n\nThis is a VISUAL fidelity fix of a clone you built (shown above). A vision model compared your clone to a screenshot of the original and listed what's off. Apply the fixes and output the COMPLETE updated HTML file.",
-                        messages: sessionMessages.concat([{ role: "user", content: visionImprovePrompt(vc) }]), num_ctx: CLONE_CTX });
+                        messages: sessionMessages.concat([{ role: "user", content: visionImprovePrompt(vc) }]), num_ctx: CLONE_CTX, temperature: CLONE_TEMP });
                     const vapp = extractApp(vacc);
                     if (!vapp) break;
                     sessionMessages[sessionMessages.length - 1] = { role: "assistant", content: vacc };

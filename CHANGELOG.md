@@ -4,6 +4,23 @@ All notable changes to this project are documented here. Format based on
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/); this project aims to
 follow [Semantic Versioning](https://semver.org/).
 
+## [1.28.2] — 2026-06-28
+
+### Fixed
+- **Sharper, more reliable website clones (regression fix).** An instrumented eval loop
+  (`tools/clone_eval.py`) pinned down two root causes of low/inconsistent clone fidelity:
+  - **Run-to-run variance.** The builder set no generation temperature, so every clone ran at
+    Ollama's default (~0.7) — the same page could swing from a good clone to a poor one. Clone
+    generation and the fidelity/vision refine passes now run at a low **temperature (0.2)** (fidelity
+    is reproduction, not creativity). In the eval this lifted the structural-fidelity floor from ~22
+    to ~36 and roughly **halved the run-to-run spread**.
+  - **Invalid Tailwind-as-CSS.** The model sometimes wrote Tailwind class names as CSS *values* inside
+    a `<style>` block (`background-color: bg-zinc-950`, `min-height: [70vh]`) — invalid and silently
+    dropped, leaving the clone with no background or hero height. The build prompt now states
+    explicitly that Tailwind utilities belong in the element's `class` attribute, never as CSS values.
+  - Plus a completeness nudge in the clone spec (implement every section as a full block — no thin or
+    placeholder pages). `tools/clone_eval.py` gained matching prompt hardening + a gold worked-example.
+
 ## [1.28.1] — 2026-06-28
 
 ### Added
